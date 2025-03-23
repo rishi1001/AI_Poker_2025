@@ -63,7 +63,7 @@ def obs_to_tensor(obs):
     min_raise = obs["min_raise"] / MAX_PLAYER_BET
     max_raise = obs["max_raise"] / MAX_PLAYER_BET
 
-    pocket_pair = obs["my_cards"][0] // 9 == obs["my_cards"][1] // 9
+    pocket_pair = obs["my_cards"][0] % 9 == obs["my_cards"][1] % 9
     pocket_suit = obs["my_cards"][0] // 9 == obs["my_cards"][1] // 9
 
     
