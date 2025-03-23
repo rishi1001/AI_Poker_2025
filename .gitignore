@@ -4,3 +4,4 @@ submission/__pycache__
 __pycache__/gym_env.cpython-312.pyc
 __pycache__/match.cpython-312.pyc
 match.csv
+dqn_poker_agent.pth
