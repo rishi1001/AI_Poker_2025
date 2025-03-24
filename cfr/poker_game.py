@@ -337,8 +337,8 @@ def compute_information_set(obs):
     max_raise_binned = int(math.log2(obs["max_raise"])) if obs["max_raise"] > 0 else 0
     valid_actions = "".join(obs["valid_actions"])
 
-    i_discarded = obs["my_discarded_card"]
-    opp_discarded = obs["opp_discarded_card"]
+    i_discarded = obs["my_discarded_card"] != -1
+    opp_discarded = obs["opp_discarded_card"] != -1
 
     return f"{player}_{my_cards_sorted}_{community_cards_sorted}_{my_bet_binned}_{opp_bet_binned}_{min_raise_binned}_{max_raise_binned}_{valid_actions}_{i_discarded}_{opp_discarded}"
 # import enum
