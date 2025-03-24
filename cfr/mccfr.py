@@ -1,3 +1,4 @@
+import pickle
 import random
 
 from cfr.abstract_game import AbstractGame
@@ -56,7 +57,9 @@ class MCCFRTrainer:
         Returns a dictionary of counterfactual values for each player.
         """
         if self.game.is_terminal(state):
-            return self.game.get_utility(state)
+            ut =  self.game.get_utility(state)
+            # print(ut)
+            return ut
         
         if self.game.is_chance_node(state):
             # Sample a chance action and continue.
@@ -96,7 +99,7 @@ class MCCFRTrainer:
 
         return utilities
 
-    def train(self, iterations: int):
+    def train(self, iterations: int, save_strat_sum_every = 10_000_000):
         """
         Run MCCFR for a specified number of iterations.
         Returns the average strategy for each information set.
@@ -108,8 +111,12 @@ class MCCFRTrainer:
             initial_state = self.game.get_initial_state()
             self.cfr(initial_state, reach_probs, sample_probs)
 
-            if i % 1000 == 0:
-                print("Iteration", i)
+            if i % 10000 == 0:
+                print(f"Iteration {i} - Number of infosets recorded: {len(self.strategySum)}")
+
+            if i % save_strat_sum_every == 0:
+                with open(f"strat_sum_{i}.pkl", "wb") as f:
+                    pickle.dump(self.strategySum, f)
 
         # Compute average strategy from cumulative strategy sums.
         average_strategy = {}
