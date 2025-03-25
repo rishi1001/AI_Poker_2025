@@ -1,7 +1,7 @@
 use crate::abstract_game::AbstractGame;
-use poker::{deck, Card, Eval, Evaluator, Rank, Suit};
+use poker::{Card, Eval, Evaluator, Rank, Suit};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::SeedableRng;
 use std::cmp;
 // use std::collections::HashMap;
 use hashbrown::HashMap;
@@ -65,16 +65,23 @@ impl WrappedEval {
 
     /// Evaluate a hand with an alternative scoring (aces treated as tens)
     pub fn evaluate(&self, hand: &Vec<Card>, board: &Vec<Card>) -> Eval {
-        let cards = hand.clone().into_iter().chain(board.clone().into_iter()).collect::<Vec<Card>>();
+        let cards = hand
+            .clone()
+            .into_iter()
+            .chain(board.clone().into_iter())
+            .collect::<Vec<Card>>();
         let reg_score = self.evaluator.evaluate(&cards).unwrap();
 
-        let alt_cards = cards.iter().map(|c| {
-            if c.rank() == Rank::Ace {
-                Card::new(Rank::Ten, c.suit())
-            } else {
-                c.clone()
-            }
-        }).collect::<Vec<Card>>();
+        let alt_cards = cards
+            .iter()
+            .map(|c| {
+                if c.rank() == Rank::Ace {
+                    Card::new(Rank::Ten, c.suit())
+                } else {
+                    c.clone()
+                }
+            })
+            .collect::<Vec<Card>>();
         let alt_score = self.evaluator.evaluate(&alt_cards).unwrap();
 
         if alt_score < reg_score {
@@ -112,8 +119,8 @@ pub struct PokerGame {
     pub small_blind_amount: i32,
     pub big_blind_amount: i32,
     pub max_player_bet: i32,
-    pub ranks: String,
-    pub suits: String,
+    // pub ranks: String,
+    // pub suits: String,
     pub evaluator: WrappedEval,
 }
 
@@ -123,8 +130,8 @@ impl PokerGame {
             small_blind_amount,
             big_blind_amount: small_blind_amount * 2,
             max_player_bet,
-            ranks: "23456789A".to_string(),
-            suits: "dhs".to_string(),
+            // ranks: "23456789A".to_string(),
+            // suits: "dhs".to_string(),
             evaluator: WrappedEval::new(),
         }
     }
@@ -526,29 +533,45 @@ impl PokerGame {
     pub fn compute_information_set_reduced(obs: &Observation) -> String {
         let acting_agent = obs.acting_agent;
         let my_cards = obs.my_cards.clone();
-        let mut flop_cards = obs.community_cards.iter().take(3).cloned().collect::<Vec<i32>>();
+        let mut flop_cards = obs
+            .community_cards
+            .iter()
+            .take(3)
+            .cloned()
+            .collect::<Vec<i32>>();
         flop_cards.sort();
         let turn_card = obs.community_cards[3];
         let river_card = obs.community_cards[4];
         let mut my_cards_sorted = my_cards.clone();
         my_cards_sorted.sort();
-        let my_cards_sorted_str = my_cards_sorted
-            .iter()
-            .map(|c| c.to_string())
-            .collect::<Vec<String>>()
-            .join("-");
+        // let my_cards_sorted_str = my_cards_sorted
+        //     .iter()
+        //     .map(|c| c.to_string())
+        //     .collect::<Vec<String>>()
+        //     .join("-");
         let are_my_two_cards_suited = if my_cards.len() >= 2 {
             (my_cards[0] / 9) == (my_cards[1] / 9)
         } else {
             false
         };
-        let mut my_card_numbers = my_cards.iter().map(|c| (c % 9).to_string()).collect::<Vec<String>>();
+        let mut my_card_numbers = my_cards
+            .iter()
+            .map(|c| (c % 9).to_string())
+            .collect::<Vec<String>>();
         my_card_numbers.sort();
         let my_card_numbers_sorted = my_card_numbers.join(",");
-        let mut flop_card_numbers = flop_cards.iter().map(|c| (c % 9).to_string()).collect::<Vec<String>>();
+        let mut flop_card_numbers = flop_cards
+            .iter()
+            .map(|c| (c % 9).to_string())
+            .collect::<Vec<String>>();
         flop_card_numbers.sort();
         let flop_card_numbers_sorted = flop_card_numbers.join(",");
-        let comm_card_numbers = format!("{},{},{}", flop_card_numbers_sorted, (turn_card % 9), (river_card % 9));
+        let comm_card_numbers = format!(
+            "{},{},{}",
+            flop_card_numbers_sorted,
+            (turn_card % 9),
+            (river_card % 9)
+        );
         let valid_actions = obs
             .valid_actions
             .iter()
@@ -557,7 +580,11 @@ impl PokerGame {
             .join(",");
 
         let mut suits_map = HashMap::new();
-        for card in my_cards_sorted.iter().chain(flop_cards.iter()).chain(&[turn_card, river_card]) {
+        for card in my_cards_sorted
+            .iter()
+            .chain(flop_cards.iter())
+            .chain(&[turn_card, river_card])
+        {
             if *card == -1 {
                 continue;
             }
@@ -572,7 +599,13 @@ impl PokerGame {
 
         format!(
             "{}_{}_{}_{}_{}_{}_{}",
-            acting_agent, my_card_numbers_sorted, is_four_flush, is_five_flush, are_my_two_cards_suited, comm_card_numbers, valid_actions
+            acting_agent,
+            my_card_numbers_sorted,
+            if is_four_flush {"True"} else {"False"},
+            if is_five_flush {"True"} else {"False"},
+            if are_my_two_cards_suited {"True"} else {"False"},
+            comm_card_numbers,
+            valid_actions
         )
     }
 }

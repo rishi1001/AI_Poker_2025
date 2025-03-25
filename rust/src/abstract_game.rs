@@ -6,7 +6,7 @@ use hashbrown::HashMap;
 pub trait AbstractGame {
     type State: Clone;
     type Player: Copy + Eq + std::hash::Hash;
-    
+
     /// Return the initial state of the game.
     fn get_initial_state(&self) -> Self::State;
     /// Return true if the state is terminal.

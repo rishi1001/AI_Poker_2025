@@ -113,9 +113,12 @@ impl<G: AbstractGame> MCCFRTrainer<G> {
         let current_player = self.game.get_current_player(state);
         let info_set = self.game.get_information_set(state, current_player);
         let available_actions = self.game.get_actions(state);
-        let strategy =
-            self.get_strategy(&info_set, &available_actions, *reach_probs.get(&current_player).unwrap());
-        
+        let strategy = self.get_strategy(
+            &info_set,
+            &available_actions,
+            *reach_probs.get(&current_player).unwrap(),
+        );
+
         // Outcome sampling: sample one action.
         let sampled_action = self.sample_action(&strategy);
         let new_state = self.game.apply_action(state, &sampled_action);
@@ -129,7 +132,11 @@ impl<G: AbstractGame> MCCFRTrainer<G> {
         for a in available_actions.clone() {
             let action_util = if a == sampled_action {
                 if let Some(prob) = strategy.get(&a) {
-                    if *prob != 0.0 { util_current / *prob } else { 0.0 }
+                    if *prob != 0.0 {
+                        util_current / *prob
+                    } else {
+                        0.0
+                    }
                 } else {
                     0.0
                 }
@@ -176,7 +183,11 @@ impl<G: AbstractGame> MCCFRTrainer<G> {
             self.cfr(&initial_state, &reach_probs, &sample_probs);
 
             if i % 10000 == 0 {
-                println!("Iteration {} - Number of infosets recorded: {}", i, self.strategy_sum.len());
+                println!(
+                    "Iteration {} - Number of infosets recorded: {}",
+                    i,
+                    self.strategy_sum.len()
+                );
             }
             if i % save_strat_sum_every == 0 {
                 let filename = format!("strat_sum_{}.json", i);
@@ -189,13 +200,17 @@ impl<G: AbstractGame> MCCFRTrainer<G> {
         for (info_set, strat_sum) in &self.strategy_sum {
             let total: f64 = strat_sum.values().sum();
             if total > 0.0 {
-                let strat: HashMap<String, f64> =
-                    strat_sum.iter().map(|(a, v)| (a.clone(), v / total)).collect();
+                let strat: HashMap<String, f64> = strat_sum
+                    .iter()
+                    .map(|(a, v)| (a.clone(), v / total))
+                    .collect();
                 average_strategy.insert(info_set.clone(), strat);
             } else {
                 let n = strat_sum.len() as f64;
-                let strat: HashMap<String, f64> =
-                    strat_sum.iter().map(|(a, _)| (a.clone(), 1.0 / n)).collect();
+                let strat: HashMap<String, f64> = strat_sum
+                    .iter()
+                    .map(|(a, _)| (a.clone(), 1.0 / n))
+                    .collect();
                 average_strategy.insert(info_set.clone(), strat);
             }
         }
@@ -208,7 +223,10 @@ impl<G: AbstractGame> MCCFRTrainer<G> {
         iterations: usize,
         _save_strat_sum_every: usize,
         custom_initial_state: Option<G::State>,
-    ) -> (HashMap<String, HashMap<String, f64>>, HashMap<String, HashMap<String, f64>>) {
+    ) -> (
+        HashMap<String, HashMap<String, f64>>,
+        HashMap<String, HashMap<String, f64>>,
+    ) {
         let players = self.game.get_players();
         for i in 0..iterations {
             let mut reach_probs = HashMap::new();
@@ -223,7 +241,11 @@ impl<G: AbstractGame> MCCFRTrainer<G> {
             };
             self.cfr(&initial_state, &reach_probs, &sample_probs);
             if i % 10000 == 0 && i > 0 {
-                println!("Iteration {} - Number of infosets recorded: {}", i, self.strategy_sum.len());
+                println!(
+                    "Iteration {} - Number of infosets recorded: {}",
+                    i,
+                    self.strategy_sum.len()
+                );
             }
         }
         (self.regret_sum.clone(), self.strategy_sum.clone())
@@ -232,19 +254,29 @@ impl<G: AbstractGame> MCCFRTrainer<G> {
 
 /// Merge a list of updates (each a pair of regret and strategy tables) into one.
 pub fn merge_updates(
-    updates: Vec<(HashMap<String, HashMap<String, f64>>, HashMap<String, HashMap<String, f64>>)>,
-) -> (HashMap<String, HashMap<String, f64>>, HashMap<String, HashMap<String, f64>>) {
+    updates: Vec<(
+        HashMap<String, HashMap<String, f64>>,
+        HashMap<String, HashMap<String, f64>>,
+    )>,
+) -> (
+    HashMap<String, HashMap<String, f64>>,
+    HashMap<String, HashMap<String, f64>>,
+) {
     let mut merged_regret_sum: HashMap<String, HashMap<String, f64>> = HashMap::new();
     let mut merged_strategy_sum: HashMap<String, HashMap<String, f64>> = HashMap::new();
     for (regret_sum, strategy_sum) in updates {
         for (info_set, action_dict) in regret_sum {
-            let entry = merged_regret_sum.entry(info_set).or_insert_with(HashMap::new);
+            let entry = merged_regret_sum
+                .entry(info_set)
+                .or_insert_with(HashMap::new);
             for (a, val) in action_dict {
                 *entry.entry(a).or_insert(0.0) += val;
             }
         }
         for (info_set, action_dict) in strategy_sum {
-            let entry = merged_strategy_sum.entry(info_set).or_insert_with(HashMap::new);
+            let entry = merged_strategy_sum
+                .entry(info_set)
+                .or_insert_with(HashMap::new);
             for (a, val) in action_dict {
                 *entry.entry(a).or_insert(0.0) += val;
             }
