@@ -1,0 +1,30 @@
+Data collection statistics:
+Total samples: 4318
+  CALL: 1227 samples (28.4%)
+  CHECK: 2642 samples (61.2%)
+  FOLD: 85 samples (2.0%)
+  RAISE: 353 samples (8.2%)
+  DISCARD: 11 samples (0.3%)
+
+Data collection complete! Saved 4318 samples to mc_training_data.pkl
+Dataset contains 4318 samples
+
+Action distribution:
+  FOLD: 85 samples (2.0%)
+  RAISE: 353 samples (8.2%)
+  CHECK: 2642 samples (61.2%)
+  CALL: 1227 samples (28.4%)
+  DISCARD: 11 samples (0.3%)
+
+Street distribution:
+  Preflop: 1000 samples (23.2%)
+  Flop: 1057 samples (24.5%)
+  Turn: 1120 samples (25.9%)
+  River: 1141 samples (26.4%)
+
+Equity distribution by action type:
+  FOLD: Avg equity = 0.159, Min = 0.000, Max = 0.320
+  RAISE: Avg equity = 0.897, Min = 0.740, Max = 1.000
+  CHECK: Avg equity = 0.424, Min = 0.000, Max = 0.960
+  CALL: Avg equity = 0.487, Min = 0.210, Max = 1.000
+  DISCARD: Avg equity = 0.220, Min = 0.150, Max = 0.310

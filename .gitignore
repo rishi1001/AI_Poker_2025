@@ -6,5 +6,12 @@ __pycache__/match.cpython-312.pyc
 match.csv
 dqn_poker_agent.pth
 model_checkpoints/
+rl_agent_weights_value.pth
+rl_agent_weights.pth
+best_rl_agent_weights_value.pth
+best_rl_agent_weights.pth
+sft_weights.pth
+mc_training_data.pkl
+
 strat_tables/
 strat_sum_*.pkl
