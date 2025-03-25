@@ -11,6 +11,10 @@ class MCCFRTrainer:
         self.regretSum = {}   # Maps infoSet -> {action: cumulative regret}
         self.strategySum = {} # Maps infoSet -> {action: cumulative strategy probability}
 
+    def reset(self):
+        self.regretSum = {}
+        self.strategySum = {}
+
     def get_strategy(self, infoSet, available_actions, realization_weight):
         """
         Compute current strategy at the information set using regret-matching,
@@ -99,7 +103,7 @@ class MCCFRTrainer:
 
         return utilities
 
-    def train(self, iterations: int, save_strat_sum_every = 10_000_000):
+    def train(self, iterations: int, save_strat_sum_every = 10_000_000, custom_initial_state = None):
         """
         Run MCCFR for a specified number of iterations.
         Returns the average strategy for each information set.
@@ -108,7 +112,7 @@ class MCCFRTrainer:
         for i in range(iterations):
             reach_probs = {p: 1.0 for p in players}
             sample_probs = {p: 1.0 for p in players}
-            initial_state = self.game.get_initial_state()
+            initial_state = self.game.get_initial_state() if custom_initial_state is None else custom_initial_state
             self.cfr(initial_state, reach_probs, sample_probs)
 
             if i % 10000 == 0:
@@ -129,3 +133,55 @@ class MCCFRTrainer:
                 n = len(strat_sum)
                 average_strategy[infoSet] = {a: 1.0 / n for a in strat_sum}
         return average_strategy
+
+    def train_strategy_sum(self, iterations: int, save_strat_sum_every = 10_000_000, custom_initial_state = None):
+        """
+        Run MCCFR for a specified number of iterations.
+        Returns the average strategy for each information set.
+        """
+        players = self.game.get_players()
+        for i in range(iterations):
+            reach_probs = {p: 1.0 for p in players}
+            sample_probs = {p: 1.0 for p in players}
+            initial_state = self.game.get_initial_state() if custom_initial_state is None else custom_initial_state
+            self.cfr(initial_state, reach_probs, sample_probs)
+
+            if i % 10000 == 0 and i > 0:
+                print(f"Iteration {i} - Number of infosets recorded: {len(self.strategySum)}")
+
+        return self.regretSum, self.strategySum
+        # Compute average strategy from cumulative strategy sums.
+        average_strategy = {}
+        for infoSet, strat_sum in self.strategySum.items():
+            total = sum(strat_sum.values())
+            if total > 0:
+                average_strategy[infoSet] = {a: strat_sum[a] / total for a in strat_sum}
+            else:
+                # In case no strategy was accumulated, default to uniform over the actions seen.
+                n = len(strat_sum)
+                average_strategy[infoSet] = {a: 1.0 / n for a in strat_sum}
+        return average_strategy
+
+# A helper function that runs a training batch in a separate process.
+def train_batch(args):
+    game, iterations, custom_initial_state = args
+    trainer = MCCFRTrainer(game)
+    regretSum, strategySum = trainer.train_strategy_sum(iterations, custom_initial_state)
+    return regretSum, strategySum
+
+# A helper to merge dictionaries of the form {infoSet: {action: value}}
+def merge_updates(updates):
+    merged_regretSum = {}
+    merged_strategySum = {}
+    for regretSum, strategySum in updates:
+        for infoSet, action_dict in regretSum.items():
+            if infoSet not in merged_regretSum:
+                merged_regretSum[infoSet] = {}
+            for a, val in action_dict.items():
+                merged_regretSum[infoSet][a] = merged_regretSum[infoSet].get(a, 0.0) + val
+        for infoSet, action_dict in strategySum.items():
+            if infoSet not in merged_strategySum:
+                merged_strategySum[infoSet] = {}
+            for a, val in action_dict.items():
+                merged_strategySum[infoSet][a] = merged_strategySum[infoSet].get(a, 0.0) + val
+    return merged_regretSum, merged_strategySum

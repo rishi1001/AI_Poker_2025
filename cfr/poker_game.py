@@ -147,28 +147,10 @@ class PokerGame(AbstractGame):
     def get_information_set(self, state, player):
         # For simplicity, we use the string representation of the player's observation.
         obs = self._get_single_player_obs(state, player)
-        return compute_information_set(obs)
-        # if obs["street"] == 0:
-        #     # acting_agent: just a byte
-        #     # my_hand -> (int, int) -> (sorted) -> turn that to a single integer:  each card is 5 bits: (c1 << 5) + c2
-        #     # my_discarded_card
-        #     # opp's discarded_card
-        #     # opp's drawn_card
-        #     # my_bet
-        #     # opp's bet
-        #     # min_raise
-        #     # max_raise
-        #     # valid actions ([1, 1, 1, 1, 1] encoded as a byte)
-        # elif obs["street"] == 1:
-        #     # same as above, plus
-        #     # first three community cards -> (int, int, int) -> (sorted) -> turn that to a 128-bit integer
-        # elif obs["street"] == 2:
-        #     pass
-        # elif obs["street"] == 3:
-        #     pass
-        # else:
-        #     raise "wtf - invalid street"
-        # return str(obs)
+        # return PokerGame.compute_information_set(obs)
+        info_set = PokerGame.compute_information_set_reduced(obs)
+        
+        return info_set
 
     def get_actions(self, state):
         acting = state["acting_agent"]
@@ -176,30 +158,62 @@ class PokerGame(AbstractGame):
         actions = []
         # FOLD
         if valid[ActionType.FOLD.value]:
-            actions.append((ActionType.FOLD.value, 0, -1))
+            actions.append("FOLD")
         # CHECK
         if valid[ActionType.CHECK.value]:
-            actions.append((ActionType.CHECK.value, 0, -1))
+            actions.append("CHECK")
         # CALL
         if valid[ActionType.CALL.value]:
-            actions.append((ActionType.CALL.value, 0, -1))
+            actions.append("CALL")
         # DISCARD (two options: discard card 0 or 1)
         if valid[ActionType.DISCARD.value]:
-            actions.append((ActionType.DISCARD.value, 0, 0))
-            actions.append((ActionType.DISCARD.value, 0, 1))
+            actions.append("DISCARD_0")
+            actions.append("DISCARD_1")
         # RAISE: include options for min, max, and if possible intermediate values.
         if valid[ActionType.RAISE.value]:
             obs = self._get_single_player_obs(state, acting)
             min_raise = obs["min_raise"]
             max_raise = obs["max_raise"]
             pot = state["bets"][0] + state["bets"][1]
-            actions.append((ActionType.RAISE.value, min_raise, -1))
-            actions.append((ActionType.RAISE.value, max_raise, -1))
-            if min_raise < pot < max_raise:
-                actions.append((ActionType.RAISE.value, pot, -1))
-            if min_raise < pot // 2 < max_raise:
-                actions.append((ActionType.RAISE.value, pot // 2, -1))
+            actions.append("RAISE_MIN")
+            actions.append("RAISE_MAX")
+            # if min_raise < pot < max_raise:
+            actions.append("RAISE_POT")
+            # if min_raise < pot // 2 < max_raise:
+            actions.append("RAISE_HALF_POT")
         return actions
+    
+    def action_str_to_action_tuple(self, state, action_str):
+        if action_str == "FOLD":
+            return (ActionType.FOLD.value, 0, -1)
+        elif action_str == "CHECK":
+            return (ActionType.CHECK.value, 0, -1)
+        elif action_str == "CALL":
+            return (ActionType.CALL.value, 0, -1)
+        elif action_str == "DISCARD_0":
+            return (ActionType.DISCARD.value, 0, 0)
+        elif action_str == "DISCARD_1":
+            return (ActionType.DISCARD.value, 0, 1)
+        elif action_str == "RAISE_MIN":
+            min_raise = min(state["min_raise"], self.max_player_bet - max(state["bets"]))
+            return (ActionType.RAISE.value, min_raise, -1)
+        elif action_str == "RAISE_MAX":
+            return (ActionType.RAISE.value, self.max_player_bet - max(state["bets"]), -1)
+        elif action_str == "RAISE_POT":
+            max_raise = self.max_player_bet - max(state["bets"])
+            min_raise = min(state["min_raise"], max_raise)
+            pot = sum(state["bets"])
+            safe_bet = max(min_raise, min(max_raise, pot))
+            return (ActionType.RAISE.value, safe_bet, -1)
+        elif action_str == "RAISE_HALF_POT":
+            max_raise = self.max_player_bet - max(state["bets"])
+            min_raise = min(state["min_raise"], max_raise)
+            pot = sum(state["bets"])
+            half_pot = pot // 2
+            safe_bet = max(min_raise, min(max_raise, half_pot))
+            return (ActionType.RAISE.value, safe_bet, -1)
+        else:
+            raise f"wtf - invalid action_str {action_str}"
 
     def get_players(self):
         return [0, 1]
@@ -226,7 +240,8 @@ class PokerGame(AbstractGame):
         return valid
 
     # ----- Core game logic: apply an action -----
-    def apply_action(self, state, action):
+    def apply_action(self, state, action_str):
+        action = self.action_str_to_action_tuple(state, action_str)
         # Make a deep copy so that previous states remain unchanged.
         new_state = copy.deepcopy(state)
         if new_state["terminated"]:
@@ -296,51 +311,116 @@ class PokerGame(AbstractGame):
     # ----- Determine the winner at showdown -----
     def _get_winner(self, state):
         board = [self.int_to_card(c) for c in state["community_cards"] if c != -1]
+        while len(board) < 5:
+                board.append(self.int_to_card(state["deck"].pop(0)))
         p0_cards = [self.int_to_card(c) for c in state["player_cards"][0] if c != -1]
         p1_cards = [self.int_to_card(c) for c in state["player_cards"][1] if c != -1]
-        score0 = self.evaluator.evaluate(p0_cards, board)
-        score1 = self.evaluator.evaluate(p1_cards, board)
-        if score0 == score1:
-            return -1  # Tie
-        elif score1 < score0:
-            return 1
-        else:
-            return 0
 
-def compute_information_set(obs):
-    """
-        obs = {
-            "street": state["street"],
-            "acting_agent": state["acting_agent"],
-            "my_cards": state["player_cards"][player],
-            "community_cards": state["community_cards"][:num_cards_to_reveal] + [-1] * (5 - num_cards_to_reveal),
-            "my_bet": state["bets"][player],
-            "opp_bet": state["bets"][1 - player],
-            "opp_discarded_card": state["discarded_cards"][1 - player],
-            "opp_drawn_card": state["drawn_cards"][1 - player],
-            "my_discarded_card": state["discarded_cards"][player],
-            "my_drawn_card": state["drawn_cards"][player],
-            "min_raise": state["min_raise"],
-            "max_raise": self.max_player_bet - max(state["bets"]),
-            "valid_actions": self._get_valid_actions(state, player),
-        }
-    """
-    flop_cards_sorted = sorted(obs["community_cards"][:3])
-    turn_card = obs["community_cards"][3]
-    river_card = obs["community_cards"][4]
-    player = obs["acting_agent"]
-    my_cards_sorted = sorted(obs["my_cards"])
-    community_cards_sorted = "-".join(flop_cards_sorted + [turn_card, river_card])
-    my_bet_binned = int(math.log2(obs["my_bet"])) if obs["my_bet"] > 0 else 0
-    opp_bet_binned = int(math.log2(obs["opp_bet"])) if obs["opp_bet"] > 0 else 0
-    min_raise_binned = int(math.log2(obs["min_raise"])) if obs["min_raise"] > 0 else 0
-    max_raise_binned = int(math.log2(obs["max_raise"])) if obs["max_raise"] > 0 else 0
-    valid_actions = "".join(obs["valid_actions"])
+        try:
+            score0 = self.evaluator.evaluate(p0_cards, board)
+            score1 = self.evaluator.evaluate(p1_cards, board)
+            if score0 == score1:
+                return -1  # Tie
+            elif score1 < score0:
+                return 1
+            else:
+                return 0
+        except Exception as e:
+            print(state["player_cards"][0], state["player_cards"][1], state["community_cards"], state["acting_agent"])
+            raise e
+        
 
-    i_discarded = obs["my_discarded_card"] != -1
-    opp_discarded = obs["opp_discarded_card"] != -1
+    def compute_information_set(obs):
+        """
+            obs = {
+                "street": state["street"],
+                "acting_agent": state["acting_agent"],
+                "my_cards": state["player_cards"][player],
+                "community_cards": state["community_cards"][:num_cards_to_reveal] + [-1] * (5 - num_cards_to_reveal),
+                "my_bet": state["bets"][player],
+                "opp_bet": state["bets"][1 - player],
+                "opp_discarded_card": state["discarded_cards"][1 - player],
+                "opp_drawn_card": state["drawn_cards"][1 - player],
+                "my_discarded_card": state["discarded_cards"][player],
+                "my_drawn_card": state["drawn_cards"][player],
+                "min_raise": state["min_raise"],
+                "max_raise": self.max_player_bet - max(state["bets"]),
+                "valid_actions": self._get_valid_actions(state, player),
+            }
+        """
+        flop_cards_sorted = sorted(obs["community_cards"][:3])
+        turn_card = obs["community_cards"][3]
+        river_card = obs["community_cards"][4]
+        player = obs["acting_agent"]
+        my_cards_sorted = "-".join(map(str, sorted(obs["my_cards"])))
+        community_cards_sorted = "-".join(map(str, flop_cards_sorted + [turn_card, river_card]))
+        my_bet_binned = int(math.log2(obs["my_bet"])) if obs["my_bet"] > 0 else 0
+        opp_bet_binned = int(math.log2(obs["opp_bet"])) if obs["opp_bet"] > 0 else 0
+        min_raise_binned = int(math.log2(obs["min_raise"])) if obs["min_raise"] > 0 else 0
+        max_raise_binned = int(math.log2(obs["max_raise"])) if obs["max_raise"] > 0 else 0
+        valid_actions = "".join(map(str, obs["valid_actions"]))
 
-    return f"{player}_{my_cards_sorted}_{community_cards_sorted}_{my_bet_binned}_{opp_bet_binned}_{min_raise_binned}_{max_raise_binned}_{valid_actions}_{i_discarded}_{opp_discarded}"
+        i_discarded = obs["my_discarded_card"] != -1
+        opp_discarded = obs["opp_discarded_card"] != -1
+
+        return f"{player}_{my_cards_sorted}_{community_cards_sorted}_{my_bet_binned}_{opp_bet_binned}_{min_raise_binned}_{max_raise_binned}_{valid_actions}_{i_discarded}_{opp_discarded}"
+    
+
+    def compute_information_set_reduced(obs):
+        """
+            obs = {
+                "street": state["street"],
+                "acting_agent": state["acting_agent"],
+                "my_cards": state["player_cards"][player],
+                "community_cards": state["community_cards"][:num_cards_to_reveal] + [-1] * (5 - num_cards_to_reveal),
+                "my_bet": state["bets"][player],
+                "opp_bet": state["bets"][1 - player],
+                "opp_discarded_card": state["discarded_cards"][1 - player],
+                "opp_drawn_card": state["drawn_cards"][1 - player],
+                "my_discarded_card": state["discarded_cards"][player],
+                "my_drawn_card": state["drawn_cards"][player],
+                "min_raise": state["min_raise"],
+                "max_raise": self.max_player_bet - max(state["bets"]),
+                "valid_actions": self._get_valid_actions(state, player),
+            }
+        """
+        flop_cards_sorted = sorted(obs["community_cards"][:3])
+        turn_card = obs["community_cards"][3]
+        river_card = obs["community_cards"][4]
+        player = obs["acting_agent"]
+        my_cards_sorted = "-".join(map(str, sorted(obs["my_cards"])))
+        community_cards_sorted = "-".join(map(str, flop_cards_sorted + [turn_card, river_card]))
+        my_bet_binned = int(math.log2(obs["my_bet"])) if obs["my_bet"] > 0 else 0
+        opp_bet_binned = int(math.log2(obs["opp_bet"])) if obs["opp_bet"] > 0 else 0
+        min_raise_binned = int(math.log2(obs["min_raise"])) if obs["min_raise"] > 0 else 0
+        max_raise_binned = int(math.log2(obs["max_raise"])) if obs["max_raise"] > 0 else 0
+        valid_actions = "".join(map(str, obs["valid_actions"]))
+
+        i_discarded = obs["my_discarded_card"] != -1
+        opp_discarded = obs["opp_discarded_card"] != -1
+
+        my_card_numbers_sorted = ",".join(sorted(map(lambda card: str(card % 9), obs["my_cards"])))
+        are_my_two_cards_suited = (obs["my_cards"][0] // 9) == (obs["my_cards"][1] // 9)
+        flop_card_numbers_sorted = sorted(map(lambda card: str(card % 9) if card != -1 else str(-1), flop_cards_sorted))
+        turn_card_number = str(turn_card % 9) if turn_card != -1 else str(-1)
+        river_card_number = str(river_card % 9) if river_card != -1 else str(-1)
+        community_card_numbers_sorted = ",".join(flop_card_numbers_sorted + [turn_card_number, river_card_number])
+        suits_map = {}
+        for card in obs["my_cards"] + flop_cards_sorted + [turn_card, river_card]:
+            if card == -1:
+                continue
+            if card // 9 not in suits_map:
+                suits_map[card // 9] = 0
+            suits_map[card // 9] += 1
+
+        is_four_flush = max(suits_map.values()) >= 4
+        is_five_flush = max(suits_map.values()) >= 5
+
+        flop_card_numbers = ",".join(flop_card_numbers_sorted)
+
+        # return f"{player}_{my_cards_sorted}_{community_cards_sorted}_{my_bet_binned}_{opp_bet_binned}_{min_raise_binned}_{max_raise_binned}_{valid_actions}_{i_discarded}_{opp_discarded}"
+        # return f"{player}_{my_card_numbers_sorted}_{is_suited}_{is_four_flush}_{is_five_flush}_{community_card_numbers_sorted}_{valid_actions}"
+        return f"{player}_{my_card_numbers_sorted}_{are_my_two_cards_suited}_{is_four_flush}_{is_five_flush}_{flop_card_numbers}_{valid_actions}"
 # import enum
 
 # import torch

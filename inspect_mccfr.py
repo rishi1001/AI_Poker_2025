@@ -1,16 +1,31 @@
 import pickle
 from itertools import islice
+import time
 
 # Load avg_strategy from the pickle file
-with open("avg_strategy_uniform_0_clean.pkl", "rb") as f:
+with open("strat_tables/avg_strategy_all_10m.pkl", "rb") as f:
     avg_strategy = pickle.load(f)
     
 
-# Print the first 10 items
-for infoSet, strategy in islice(avg_strategy.items(), 10):
+# Print the items in street 0, for player 0, where community cards are all -1
+for infoSet, strategy in avg_strategy.items():
+    x = infoSet.split('_')
+    if x[0] == '1': continue
+    if x[5] != "-1,-1,-1": continue
     print(f"InfoSet {infoSet}: {strategy}")
 
+print(f"Number of infosets: {len(avg_strategy.keys())}")
 
+time.sleep(5)
+
+with open("strat_sum_9000000.pkl", "rb") as f:
+    strat_sum = pickle.load(f)
+
+for infoSet, strat_sum in strat_sum.items():
+    x = infoSet.split('_')
+    if x[0] == '1': continue
+    if x[5] != "-1,-1,-1": continue
+    print(f"InfoSet {infoSet}: {strat_sum}")
 
 # total = 0
 # uniform = 0

@@ -6,3 +6,5 @@ __pycache__/match.cpython-312.pyc
 match.csv
 dqn_poker_agent.pth
 model_checkpoints/
+strat_tables/
+strat_sum_*.pkl
