@@ -50,7 +50,7 @@ use std::thread;
 
 fn main() {
     // Total iterations to run across all batches.
-    let total_iterations = 1_000_000_000;
+    let total_iterations = 5_000_000_000;
     // Number of parallel batches. You can set this to the number of CPU cores (using num_cpus::get()).
     let num_batches = 8;
     let iterations_per_batch = total_iterations / num_batches;
