@@ -6,8 +6,8 @@ from cfr import mccfr, poker_game
 if __name__ == "__main__":
     game = poker_game.PokerGame()
     trainer = mccfr.MCCFRTrainer(game)
-    num_iterations = 80_000_000
-    num_processes = 8
+    num_iterations = 100_000_000
+    num_processes = 10
     iter_per_process = num_iterations // num_processes
 
     # Prepare arguments for each process.
@@ -19,7 +19,7 @@ if __name__ == "__main__":
 
     merged_regretSum, merged_strategySum = mccfr.merge_updates(results)
 
-    avg_strategy = trainer.train(100_000_000, save_strat_sum_every=1_000_000)
+    # avg_strategy = trainer.train(100_000_000, save_strat_sum_every=1_000_000)
 
 
     # Compute the average strategy from the aggregated strategy sum.

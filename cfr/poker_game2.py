@@ -155,54 +155,53 @@ class PokerGame(AbstractGame):
         actions = []
         # FOLD
         if valid[ActionType.FOLD.value]:
-            actions.append("FOLD")
+            actions.append(0)
         # CHECK
         if valid[ActionType.CHECK.value]:
-            actions.append("CHECK")
+            actions.append(1)
         # CALL
         if valid[ActionType.CALL.value]:
-            actions.append("CALL")
+            actions.append(2)
         # DISCARD (two options: discard card 0 or 1)
         if valid[ActionType.DISCARD.value]:
-            actions.append("DISCARD_0")
-            actions.append("DISCARD_1")
+            actions.append(3)
+            actions.append(4)
         # RAISE: include options for min, max, and if possible intermediate values.
         if valid[ActionType.RAISE.value]:
             obs = self._get_single_player_obs(state, acting)
-            min_raise = obs["min_raise"]
-            max_raise = obs["max_raise"]
-            pot = state["bets"][0] + state["bets"][1]
-            actions.append("RAISE_MIN")
-            actions.append("RAISE_MAX")
-            # if min_raise < pot < max_raise:
-            actions.append("RAISE_POT")
-            # if min_raise < pot // 2 < max_raise:
-            actions.append("RAISE_HALF_POT")
+            actions.append(5) # min raise
+            actions.append(6) # max raise
+            actions.append(7) # pot
+            actions.append(8) # half pot
         return actions
     
-    def action_str_to_action_tuple(self, state, action_str):
-        if action_str == "FOLD":
+    def action_int_to_action_tuple(self, state, action_int):
+        if action_int == 0:
             return (ActionType.FOLD.value, 0, -1)
-        elif action_str == "CHECK":
+        elif action_int == 1:
             return (ActionType.CHECK.value, 0, -1)
-        elif action_str == "CALL":
+        elif action_int == 2:
             return (ActionType.CALL.value, 0, -1)
-        elif action_str == "DISCARD_0":
-            return (ActionType.DISCARD.value, 0, 0)
-        elif action_str == "DISCARD_1":
-            return (ActionType.DISCARD.value, 0, 1)
-        elif action_str == "RAISE_MIN":
+        elif action_int == 3:
+            current_hand = state["player_cards"][state["acting_agent"]]
+            lower_card_idx = 0 if current_hand[0] % 9 <= current_hand[1] % 9 else 1
+            return (ActionType.DISCARD.value, 0, lower_card_idx)
+        elif action_int == 4:
+            current_hand = state["player_cards"][state["acting_agent"]]
+            higher_card_idx = 0 if current_hand[0] % 9 >= current_hand[1] % 9 else 1
+            return (ActionType.DISCARD.value, 0, higher_card_idx)
+        elif action_int == 5:
             min_raise = min(state["min_raise"], self.max_player_bet - max(state["bets"]))
             return (ActionType.RAISE.value, min_raise, -1)
-        elif action_str == "RAISE_MAX":
+        elif action_int == 6:
             return (ActionType.RAISE.value, self.max_player_bet - max(state["bets"]), -1)
-        elif action_str == "RAISE_POT":
+        elif action_int == 7:
             max_raise = self.max_player_bet - max(state["bets"])
             min_raise = min(state["min_raise"], max_raise)
             pot = sum(state["bets"])
             safe_bet = max(min_raise, min(max_raise, pot))
             return (ActionType.RAISE.value, safe_bet, -1)
-        elif action_str == "RAISE_HALF_POT":
+        elif action_int == 8:
             max_raise = self.max_player_bet - max(state["bets"])
             min_raise = min(state["min_raise"], max_raise)
             pot = sum(state["bets"])
@@ -210,7 +209,7 @@ class PokerGame(AbstractGame):
             safe_bet = max(min_raise, min(max_raise, half_pot))
             return (ActionType.RAISE.value, safe_bet, -1)
         else:
-            raise f"wtf - invalid action_str {action_str}"
+            raise f"wtf - invalid action_int {action_int}"
 
     def get_players(self):
         return [0, 1]
@@ -238,7 +237,7 @@ class PokerGame(AbstractGame):
 
     # ----- Core game logic: apply an action -----
     def apply_action(self, state, action_str):
-        action = self.action_str_to_action_tuple(state, action_str)
+        action = self.action_int_to_action_tuple(state, action_str)
         # Make a deep copy so that previous states remain unchanged.
         new_state = copy.deepcopy(state)
         if new_state["terminated"]:
@@ -360,7 +359,7 @@ class PokerGame(AbstractGame):
 
         continuation_cost = obs["opp_bet"] - obs["my_bet"]
         pot = obs["opp_bet"] + obs["my_bet"]
-        pot_odds = continuation_cost / (continuation_cost + pot)
+        pot_odds = continuation_cost / pot
 
         player = obs["acting_agent"]
         my_hand_numbers_int = tuple_to_int_2(my_card_numbers_sorted_0_to_9)
@@ -376,7 +375,26 @@ class PokerGame(AbstractGame):
 
         return info_set_index
 
+def decode_infoset_int(infoset):
+    radices = (2    , 55                 , 2                             , 3           , 2002                      , 8                   , 3              )
+    x = list(decode_fields(infoset, radices))
+    x[1] = int_to_tuple_2(x[1])
+    x[4] = int_to_tuple_5(x[4])
+    return x
+
 from functools import reduce
+
+def pretty_action_list(action_probabilities):
+    f_p = action_probabilities[0]
+    ch_p = action_probabilities[1]
+    call_p = action_probabilities[2]
+    d0_p = action_probabilities[3]
+    d1_p = action_probabilities[4]
+    r_min_p = action_probabilities[5]
+    r_max_p = action_probabilities[6]
+    r_pot_p = action_probabilities[7]
+    r_hp_p = action_probabilities[8]
+    return f"F:{f_p:.3f}|Ch:{ch_p:.3f}|Ca:{call_p:.3f}|D0:{d0_p:.3f}|D1:{d1_p:.3f}|Rmin:{r_min_p:.3f}|Rmax:{r_max_p:.3f}|Rp:{r_pot_p:.3f}|Rhp:{r_hp_p:.3f}"
 
 def encode_fields(values, radices):
     """

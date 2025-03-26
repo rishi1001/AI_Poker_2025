@@ -18,10 +18,6 @@ def main():
     # Load configuration
     with open('agent_config.json', 'r') as f:
         config = json.load(f)
-        
-    # delete the loss_log.csv file
-    with open("loss_log.csv", "w") as f:
-        pass
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
     logger = logging.getLogger(__name__)
@@ -50,7 +46,6 @@ def main():
         f"http://localhost:{config['bot0']['port']}",
         f"http://localhost:{config['bot1']['port']}",
         logger,
-        num_hands=10_000,
         csv_path=config['match_settings']['csv_output_path'],
         team_0_name=bot0_class.__name__,
         team_1_name=bot1_class.__name__
