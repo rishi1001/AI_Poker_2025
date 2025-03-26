@@ -597,7 +597,11 @@ impl PokerGame {
         let is_four_flush = *suits_map.values().max().unwrap() >= 4;
         let is_five_flush = *suits_map.values().max().unwrap() >= 5;
 
-        let log2_opp_bet = (obs.opp_bet as f64).log2().floor() as u32;
+        let continuation_cost = (obs.opp_bet - obs.my_bet) as f64;
+        let pot = (obs.my_bet + obs.opp_bet) as f64;
+        let pod_odds = continuation_cost / (pot + continuation_cost);
+
+        let binned_pod_odds = (pod_odds * 5.0).floor() as u32;
 
         format!(
             "{}_{}_{}_{}_{}_{}_{}_{}",
@@ -607,7 +611,7 @@ impl PokerGame {
             if is_five_flush {"True"} else {"False"},
             if are_my_two_cards_suited {"True"} else {"False"},
             comm_card_numbers,
-            log2_opp_bet,
+            binned_pod_odds,
             valid_actions
         )
     }
