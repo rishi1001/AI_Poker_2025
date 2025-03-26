@@ -1,145 +1,94 @@
-// mod abstract_game;
-// mod mccfr;
-// mod poker_game;
-
-// use mccfr::MCCFRTrainer;
-// use poker_game::PokerGame;
-// use serde_pickle;
-// use std::fs;
-// use std::path::Path;
-
-// fn main() {
-//     // Create a poker game instance.
-//     let game = PokerGame::new(1, 100);
-//     let mut trainer = MCCFRTrainer::new(game);
-
-//     // Train for a (possibly large) number of iterations.
-//     // (Here we use a lower iteration count for testing.)
-//     let avg_strategy = trainer.train(1_000_000_000, 100_000_000, None);
-
-//     //     // Save the average strategy to a file.
-//     //     let path = Path::new("strat_tables/avg_strategy_all.json");
-//     //     if let Some(parent) = path.parent() {
-//     //         fs::create_dir_all(parent).expect("Failed to create directories");
-//     //     }
-//     //     let file = fs::File::create(path).expect("Failed to create file");
-//     //     serde_json::to_writer(file, &avg_strategy).expect("Failed to write avg_strategy");
-
-//     // Save the average strategy to a file using serde_pickle.
-//     let path = Path::new("strat_tables/avg_strategy_all.pkl");
-//     if let Some(parent) = path.parent() {
-//         fs::create_dir_all(parent).expect("Failed to create directories");
-//     }
-//     let mut file = fs::File::create(path).expect("Failed to create file");
-//     serde_pickle::to_writer(&mut file, &avg_strategy, Default::default())
-//         .expect("Failed to write avg_strategy");
-// }
-
-
 mod abstract_game;
 mod mccfr;
 mod poker_game;
 
-use mccfr::{MCCFRTrainer, merge_updates};
-use poker_game::PokerGame;
-use serde_pickle;
-// use std::collections::HashMap;
-use hashbrown::HashMap;
-use std::io::Write;
-use std::time::Instant;
-use std::{fs, time};
+use std::fs;
 use std::path::Path;
-use std::thread;
-use chrono::Local;
-use rmp_serde::to_vec;
 
+use mccfr::MCCFR;
+use poker_game::decode_infoset_int;
+use poker_game::NiceInfoSet;
+// your MCCFR solver module
+use poker_game::pretty_action_list;
+use poker_game::PokerGame; // your PokerGame module // your helper functions for decoding & pretty printing
+
+// For serialization we use bincode (add it to Cargo.toml)
+use serde_pickle;
 
 fn main() {
-    // Number of parallel batches. You can set this to the number of CPU cores (using num_cpus::get()).
-    let num_batches = 10;
-    let iterations_per_batch = 1_000_000;
-    
-    let mut updates = Vec::new();
+    // Create the output directory if it does not exist.
+    let output_dir = "strat_tables";
+    if !Path::new(output_dir).exists() {
+        fs::create_dir(output_dir).expect("Failed to create output directory");
+    }
 
-    loop {
+    // Instantiate the game.
+    // (Make sure your PokerGame implementation uses integer information sets.)
+    let game_instance = PokerGame::new(1, 100);
+    let num_info_sets = 31_711_680; // total number of information sets
+    let num_actions = 9; // maximum number of actions per info set
 
-        // Spawn a thread for each training batch.
-        let mut handles = Vec::new();
-        for _ in 0..num_batches {
-            // Each thread creates its own game instance.
-            let game = PokerGame::new(1, 100);
-            let handle = thread::spawn(move || {
-                let mut trainer = MCCFRTrainer::new(game);
-                // Use train_strategy_sum; the second argument (save_strat_sum_every) is set to 0 since we don't save intermediate files.
-                trainer.train_strategy_sum(iterations_per_batch, 0, None)
-            });
-            handles.push(handle);
+    // Create the MCCFR solver.
+    let mut mccfr_solver = MCCFR::new(game_instance, num_info_sets, num_actions);
+
+    println!("Starting");
+
+    // Run iterations.
+    // Here we run 1,000,000 iterations; in each iteration we update for both players.
+    for iteration in 0..1_000_000 {
+        for player in [0, 1].iter() {
+            mccfr_solver.run_iteration(*player);
         }
 
-        // Collect the (regret_sum, strategy_sum) updates from all threads.
-        for handle in handles {
-            let update = handle.join().expect("Thread panicked");
-            updates.push(update);
-        }
+        // Every 10 iterations, save the strategy tables and print selected info.
+        if iteration % 1000 == 0 {
+            // Compute the average strategy (a vector indexed by info set).
+            let avg_strategy: Vec<Option<Vec<f64>>> = mccfr_solver.compute_average_strategy();
+            let avg_strategy: Vec<_> = avg_strategy
+                .into_iter()
+                .map(|opt| opt.unwrap_or_else(|| vec![]))
+                .collect();
 
-        // Merge the updates from all batches.
-        let (merged_regret_sum, merged_strategy_sum) = merge_updates(&updates);
+            let filename_avg = format!("{}/avg_strategy_{}.pkl", output_dir, iteration);
+            let filename_cum = format!("{}/cumulative_strategy_{}.pkl", output_dir, iteration);
 
-        // Compute average strategy from the merged strategy sums.
-        let mut average_strategy: HashMap<String, HashMap<String, f64>> = HashMap::new();
-        for (info_set, strat_sum) in merged_strategy_sum.iter() {
-            let total: f64 = strat_sum.values().sum();
-            if total > 0.0 {
-                let strat: HashMap<String, f64> = strat_sum
-                    .iter()
-                    .map(|(a, v)| (a.clone(), v / total))
-                    .collect();
-                average_strategy.insert(info_set.clone(), strat);
-            } else {
-                let n = strat_sum.len() as f64;
-                let strat: HashMap<String, f64> = strat_sum
-                    .iter()
-                    .map(|(a, _)| (a.clone(), 1.0 / n))
-                    .collect();
-                average_strategy.insert(info_set.clone(), strat);
+            // Serialize using serde_pickle (ensure your types implement Serialize)
+            let avg_data = serde_pickle::to_vec(&avg_strategy, Default::default())
+                .expect("Serialization failed for avg_strategy");
+            fs::write(&filename_avg, avg_data).expect("Failed writing avg_strategy file");
+
+            let cum_data =
+                serde_pickle::to_vec(&mccfr_solver.cumulative_strategy, Default::default())
+                    .expect("Serialization failed for cumulative_strategy");
+            fs::write(&filename_cum, cum_data).expect("Failed writing cumulative_strategy file");
+
+            // For each modified information set, decode and print if the community tuple equals (0,0,0,0,0).
+            for &infoset in mccfr_solver.modified_infosets.iter() {
+                let nice_info_set: NiceInfoSet = decode_infoset_int(infoset);
+                // In this example we check if the community field equals [0, 0, 0, 0, 0].
+                if nice_info_set.community != vec![0, 0, 0, 0, 0] {
+                    continue;
+                }
+                let nice_action_list = pretty_action_list(&avg_strategy[infoset]);
+                println!("{:?}: {}", nice_info_set, nice_action_list);
             }
+            println!("Iteration {} finished", iteration);
         }
+    }
 
-        let number_of_info_sets = merged_strategy_sum.len();
-
-        println!("Number of infosets (combined): {}", number_of_info_sets);
-
-        // Save the average strategy using serde_pickle.
-        // Get the current local time.
-        let now = Local::now();
-        
-        // Format the time as a string. You can adjust the format string as needed.
-        let formatted_time = now.format("%Y%m%d_%H%M%S").to_string();
-        let name = format!("strat_tables/avg_strategy_merged_{}.msgpack", formatted_time);
-        let path = Path::new(&name);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).expect("Failed to create directories");
+    // After iterations finish, print the overall average strategy for the matching info sets.
+    let avg_strategy = mccfr_solver.compute_average_strategy();
+    let avg_strategy: Vec<_> = avg_strategy
+        .into_iter()
+        .map(|opt| opt.unwrap_or_else(|| vec![]))
+        .collect();
+    println!("Average Strategy (Info Set index -> Action Probabilities):");
+    for &infoset in mccfr_solver.modified_infosets.iter() {
+        let nice_info_set: NiceInfoSet = decode_infoset_int(infoset);
+        if nice_info_set.community != vec![0, 0, 0, 0, 0] {
+            continue;
         }
-        let mut file = fs::File::create(path).expect("Failed to create file");
-        println!("Started writing avg_strategy");
-        // serde_pickle::to_writer(&mut file, &average_strategy, Default::default())
-        //     .expect("Failed to write avg_strategy");
-        let encoded = to_vec(&average_strategy).unwrap();
-        file.write_all(&encoded).unwrap();
-        println!("Finished writing avg_strategy");
-
-        // Save the strategy sum using serde_pickle.
-        let name = format!("strat_tables/strategy_sum_merged_{}.msgpack", formatted_time);
-        let path = Path::new(&name);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).expect("Failed to create directories");
-        }
-        let mut file = fs::File::create(path).expect("Failed to create file");
-        println!("Started writing strategy_sum");
-        // serde_pickle::to_writer(&mut file, &merged_strategy_sum, Default::default())
-        //     .expect("Failed to write strategy_sum");
-        let encoded = to_vec(&merged_strategy_sum).unwrap();
-        file.write_all(&encoded).unwrap();
-        println!("Finished writing strategy_sum");
+        let nice_action_list = pretty_action_list(&avg_strategy[infoset]);
+        println!("{:?}: {}", nice_info_set, nice_action_list);
     }
 }

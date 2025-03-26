@@ -1,286 +1,197 @@
-use crate::abstract_game::AbstractGame;
-use rand::Rng;
-// use std::collections::HashMap;
-use hashbrown::HashMap;
+use rand::distributions::{Distribution, WeightedIndex};
+use rand::thread_rng;
+use std::collections::HashSet;
+use std::marker::PhantomData;
 
-/// The Monte Carlo CFR trainer. It holds cumulative regret and strategy tables.
-pub struct MCCFRTrainer<G: AbstractGame> {
-    pub game: G,
-    pub regret_sum: HashMap<String, HashMap<String, f64>>,
-    pub strategy_sum: HashMap<String, HashMap<String, f64>>,
+
+use crate::abstract_game::AbstractGame;
+
+/// Compute a strategy using regret matching.
+/// For each action in `regrets`, if the action is available and its regret is positive,
+/// it is taken into account; otherwise it is set to 0. Then the strategy is normalized
+/// or, if no positive regret exists, a uniform distribution is returned.
+fn regret_matching_list(regrets: &Vec<f64>, available_actions: &Vec<usize>) -> Vec<f64> {
+    let mut positive_regrets = vec![0.0; regrets.len()];
+    for a in 0..regrets.len() {
+        if available_actions.contains(&a) && regrets[a] > 0.0 {
+            positive_regrets[a] = regrets[a];
+        }
+    }
+    let total_positive: f64 = available_actions.iter().map(|&a| positive_regrets[a]).sum();
+    let mut strategy = vec![0.0; regrets.len()];
+    if total_positive > 0.0 {
+        for &a in available_actions {
+            strategy[a] = positive_regrets[a] / total_positive;
+        }
+    } else {
+        let num = available_actions.len();
+        for &a in available_actions {
+            strategy[a] = 1.0 / num as f64;
+        }
+    }
+    strategy
 }
 
-impl<G: AbstractGame> MCCFRTrainer<G> {
-    pub fn new(game: G) -> Self {
-        Self {
+/// The Monte Carlo Counterfactual Regret Minimization (MCCFR) struct.
+/// - `G` is a type that implements `AbstractGame<State>`.
+/// - `State` is the type representing a game state.
+pub struct MCCFR<G, State>
+where
+    G: AbstractGame<State>,
+{
+    pub game: G,
+    pub num_actions: usize,
+    pub num_info_sets: usize,
+    /// A vector (indexed by information set) of optional regret vectors.
+    pub regrets: Vec<Option<Vec<f64>>>,
+    /// A vector (indexed by information set) of optional cumulative strategy vectors.
+    pub cumulative_strategy: Vec<Option<Vec<f64>>>,
+    /// A set tracking which information sets have been modified.
+    pub modified_infosets: HashSet<usize>,
+    _state: PhantomData<State>,
+}
+
+impl<G, State> MCCFR<G, State>
+where
+    G: AbstractGame<State>,
+    State: Clone,
+{
+    /// Create a new MCCFR instance.
+    pub fn new(game: G, num_info_sets: usize, num_actions: usize) -> Self {
+        MCCFR {
             game,
-            regret_sum: HashMap::new(),
-            strategy_sum: HashMap::new(),
+            num_actions,
+            num_info_sets,
+            regrets: vec![None; num_info_sets],
+            cumulative_strategy: vec![None; num_info_sets],
+            modified_infosets: HashSet::new(),
+            _state: PhantomData,
         }
     }
 
-    pub fn reset(&mut self) {
-        self.regret_sum.clear();
-        self.strategy_sum.clear();
+    /// Ensure that the inner vectors for a given information set index are initialized.
+    fn ensure_info_set(&mut self, info_set: usize) {
+        if self.regrets[info_set].is_none() {
+            self.regrets[info_set] = Some(vec![0.0; self.num_actions]);
+        }
+        if self.cumulative_strategy[info_set].is_none() {
+            self.cumulative_strategy[info_set] = Some(vec![0.0; self.num_actions]);
+        }
     }
 
-    /// Given an information set and the available actions, compute the current strategy
-    /// (via regret matching) and update the cumulative strategy sum.
-    pub fn get_strategy(
+    /// The recursive external sampling function.
+    /// - `state`: the current game state.
+    /// - `traverser`: the player index for whom we update regrets.
+    /// - `pi`: the probability of reaching this state under the traverser’s strategy.
+    /// - `sigma`: the product of sampling probabilities along the trajectory.
+    /// - `depth`: the current recursion depth.
+    ///
+    /// Returns the counterfactual value for the traverser.
+    pub fn external_sampling(
         &mut self,
-        info_set: &str,
-        available_actions: &[String],
-        realization_weight: f64,
-    ) -> HashMap<String, f64> {
-        if !self.regret_sum.contains_key(info_set) {
-            let mut map = HashMap::new();
-            for a in available_actions {
-                map.insert(a.clone(), 0.0);
-            }
-            self.regret_sum.insert(info_set.to_string(), map);
+        state: &State,
+        traverser: usize,
+        pi: f64,
+        sigma: f64,
+        depth: usize,
+    ) -> f64 {
+        if depth > 25 {
+            println!("Depth exceeded: {}", depth);
+            return 0.0;
         }
-        let regrets = self.regret_sum.get(info_set).unwrap();
-        let mut normalizing_sum = 0.0;
-        for a in available_actions {
-            normalizing_sum += regrets.get(a).cloned().unwrap_or(0.0).max(0.0);
-        }
-        let strategy: HashMap<String, f64> = if normalizing_sum > 0.0 {
-            available_actions
-                .iter()
-                .map(|a| {
-                    let reg = regrets.get(a).cloned().unwrap_or(0.0);
-                    (a.clone(), reg.max(0.0) / normalizing_sum)
-                })
-                .collect()
-        } else {
-            let uniform = 1.0 / available_actions.len() as f64;
-            available_actions
-                .iter()
-                .map(|a| (a.clone(), uniform))
-                .collect()
-        };
 
-        if !self.strategy_sum.contains_key(info_set) {
-            let mut map = HashMap::new();
-            for a in available_actions {
-                map.insert(a.clone(), 0.0);
-            }
-            self.strategy_sum.insert(info_set.to_string(), map);
-        } else {
-            let strat_sum = self.strategy_sum.get_mut(info_set).unwrap();
-            for a in available_actions {
-                strat_sum.entry(a.clone()).or_insert(0.0);
-            }
-        }
-        if let Some(strat_sum) = self.strategy_sum.get_mut(info_set) {
-            for a in available_actions {
-                let entry = strat_sum.entry(a.clone()).or_insert(0.0);
-                *entry += realization_weight * strategy.get(a).unwrap_or(&0.0);
-            }
-        }
-        strategy
-    }
-
-    /// Sample an action from a strategy (a mapping from action to probability).
-    pub fn sample_action(&self, strategy: &HashMap<String, f64>) -> String {
-        let mut rng = rand::thread_rng();
-        let r: f64 = rng.gen();
-        let mut cumulative_probability = 0.0;
-        for (a, prob) in strategy.iter() {
-            cumulative_probability += prob;
-            if r < cumulative_probability {
-                return a.clone();
-            }
-        }
-        strategy.keys().last().unwrap().clone()
-    }
-
-    /// Recursively perform outcome-sampling MCCFR.
-    pub fn cfr(
-        &mut self,
-        state: &G::State,
-        reach_probs: &HashMap<G::Player, f64>,
-        sample_probs: &HashMap<G::Player, f64>,
-    ) -> HashMap<G::Player, f64> {
         if self.game.is_terminal(state) {
-            return self.game.get_utility(state);
+            return self.game.get_utility(state)[traverser];
         }
+
         if self.game.is_chance_node(state) {
-            let action = self.game.sample_chance_action(state);
-            let next_state = self.game.apply_action(state, &action);
-            return self.cfr(&next_state, reach_probs, sample_probs);
+            println!("Encountered chance node");
+            let (action, prob) = self.game.sample_chance_action(state);
+            let next_state = self.game.get_child(state, action);
+            return self.external_sampling(&next_state, traverser, pi, sigma * prob, depth + 1);
         }
+
         let current_player = self.game.get_current_player(state);
         let info_set = self.game.get_information_set(state, current_player);
+        self.modified_infosets.insert(info_set);
+        self.ensure_info_set(info_set);
         let available_actions = self.game.get_actions(state);
-        let strategy = self.get_strategy(
-            &info_set,
-            &available_actions,
-            *reach_probs.get(&current_player).unwrap(),
-        );
 
-        // Outcome sampling: sample one action.
-        let sampled_action = self.sample_action(&strategy);
-        let new_state = self.game.apply_action(state, &sampled_action);
-        let mut new_sample_probs = sample_probs.clone();
-        if let Some(prob) = strategy.get(&sampled_action) {
-            let current_sp = new_sample_probs.get_mut(&current_player).unwrap();
-            *current_sp *= *prob;
-        }
-        let utilities = self.cfr(&new_state, reach_probs, &new_sample_probs);
-        let util_current = *utilities.get(&current_player).unwrap();
-        for a in available_actions.clone() {
-            let action_util = if a == sampled_action {
-                if let Some(prob) = strategy.get(&a) {
-                    if *prob != 0.0 {
-                        util_current / *prob
-                    } else {
-                        0.0
-                    }
-                } else {
-                    0.0
-                }
-            } else {
-                0.0
-            };
-            let regret = action_util - util_current;
-            if !self.regret_sum.contains_key(&info_set) {
-                let mut map = HashMap::new();
-                for act in &available_actions {
-                    map.insert(act.clone(), 0.0);
-                }
-                self.regret_sum.insert(info_set.clone(), map);
+        if current_player == traverser as i32 {
+            let strategy =
+                regret_matching_list(self.regrets[info_set].as_ref().unwrap(), &available_actions);
+            let mut node_value = 0.0;
+            let mut action_values = vec![0.0; self.num_actions];
+
+            // Evaluate all available actions.
+            for &a in &available_actions {
+                let next_state = self.game.apply_action(state, a);
+                let action_value = self.external_sampling(
+                    &next_state,
+                    traverser,
+                    pi * strategy[a],
+                    sigma,
+                    depth + 1,
+                );
+                action_values[a] = action_value;
+                node_value += strategy[a] * action_value;
             }
-            if let Some(regret_map) = self.regret_sum.get_mut(&info_set) {
-                let entry = regret_map.entry(a.clone()).or_insert(0.0);
-                if let Some(sample_prob) = sample_probs.get(&current_player) {
-                    *entry += (1.0 / *sample_prob) * regret;
+
+            // Update regrets.
+            if let Some(regret_vec) = self.regrets[info_set].as_mut() {
+                for &a in &available_actions {
+                    let regret = action_values[a] - node_value;
+                    regret_vec[a] += (pi / sigma) * regret;
                 }
             }
+
+            // Update cumulative strategy.
+            if let Some(cum_strat_vec) = self.cumulative_strategy[info_set].as_mut() {
+                for &a in &available_actions {
+                    cum_strat_vec[a] += pi * strategy[a];
+                }
+            }
+
+            node_value
+        } else {
+            let strategy =
+                regret_matching_list(self.regrets[info_set].as_ref().unwrap(), &available_actions);
+            // Sample one action according to the strategy.
+            let weights: Vec<f64> = available_actions.iter().map(|&a| strategy[a]).collect();
+            let dist = WeightedIndex::new(&weights).unwrap();
+            let mut rng = thread_rng();
+            let chosen_index = dist.sample(&mut rng);
+            let chosen_action = available_actions[chosen_index];
+            let next_state = self.game.apply_action(state, chosen_action);
+            self.external_sampling(&next_state, traverser, pi, sigma * strategy[chosen_action], depth + 1)
         }
-        utilities
     }
 
-    /// Run MCCFR for a given number of iterations, periodically saving the strategy sums.
-    pub fn train(
-        &mut self,
-        iterations: usize,
-        save_strat_sum_every: usize,
-        custom_initial_state: Option<G::State>,
-    ) -> HashMap<String, HashMap<String, f64>> {
-        let players = self.game.get_players();
-        for i in 0..iterations {
-            let mut reach_probs = HashMap::new();
-            let mut sample_probs = HashMap::new();
-            for p in &players {
-                reach_probs.insert(*p, 1.0);
-                sample_probs.insert(*p, 1.0);
-            }
-            let initial_state = match &custom_initial_state {
-                Some(state) => state.clone(),
-                None => self.game.get_initial_state(),
-            };
-            self.cfr(&initial_state, &reach_probs, &sample_probs);
+    /// Run a single MCCFR iteration for the specified traverser.
+    pub fn run_iteration(&mut self, traverser: usize) {
+        let initial_state = self.game.get_initial_state();
+        self.external_sampling(&initial_state, traverser, 1.0, 1.0, 0);
+    }
 
-            if i % 10000 == 0 {
-                println!(
-                    "Iteration {} - Number of infosets recorded: {}",
-                    i,
-                    self.strategy_sum.len()
-                );
-            }
-            if i % save_strat_sum_every == 0 {
-                let filename = format!("strat_sum_{}.json", i);
-                if let Ok(file) = std::fs::File::create(&filename) {
-                    let _ = serde_json::to_writer(file, &self.strategy_sum);
-                }
-            }
-        }
-        let mut average_strategy = HashMap::new();
-        for (info_set, strat_sum) in &self.strategy_sum {
-            let total: f64 = strat_sum.values().sum();
-            if total > 0.0 {
-                let strat: HashMap<String, f64> = strat_sum
-                    .iter()
-                    .map(|(a, v)| (a.clone(), v / total))
-                    .collect();
-                average_strategy.insert(info_set.clone(), strat);
+    /// Compute the average strategy from the cumulative strategy.
+    /// Returns a vector (indexed by information set) where each entry is an optional
+    /// vector representing the normalized strategy.
+    pub fn compute_average_strategy(&self) -> Vec<Option<Vec<f64>>> {
+        let mut average_strategy = vec![None; self.num_info_sets];
+        for &i in &self.modified_infosets {
+            if let Some(ref action_counts) = self.cumulative_strategy[i] {
+                let total: f64 = action_counts.iter().sum();
+                let avg_strat = if total > 0.0 {
+                    action_counts.iter().map(|&c| c / total).collect()
+                } else {
+                    let num = action_counts.len();
+                    vec![1.0 / num as f64; num]
+                };
+                average_strategy[i] = Some(avg_strat);
             } else {
-                let n = strat_sum.len() as f64;
-                let strat: HashMap<String, f64> = strat_sum
-                    .iter()
-                    .map(|(a, _)| (a.clone(), 1.0 / n))
-                    .collect();
-                average_strategy.insert(info_set.clone(), strat);
+                average_strategy[i] = Some(vec![]);
             }
         }
         average_strategy
     }
-
-    /// A variant that returns the raw regret and strategy sums.
-    pub fn train_strategy_sum(
-        &mut self,
-        iterations: usize,
-        _save_strat_sum_every: usize,
-        custom_initial_state: Option<G::State>,
-    ) -> (
-        HashMap<String, HashMap<String, f64>>,
-        HashMap<String, HashMap<String, f64>>,
-    ) {
-        let players = self.game.get_players();
-        for i in 0..iterations {
-            let mut reach_probs = HashMap::new();
-            let mut sample_probs = HashMap::new();
-            for p in &players {
-                reach_probs.insert(*p, 1.0);
-                sample_probs.insert(*p, 1.0);
-            }
-            let initial_state = match &custom_initial_state {
-                Some(state) => state.clone(),
-                None => self.game.get_initial_state(),
-            };
-            self.cfr(&initial_state, &reach_probs, &sample_probs);
-            if i % 10000 == 0 && i > 0 {
-                println!(
-                    "Iteration {} - Number of infosets recorded: {}",
-                    i,
-                    self.strategy_sum.len()
-                );
-            }
-        }
-        (self.regret_sum.clone(), self.strategy_sum.clone())
-    }
-}
-
-/// Merge a list of updates (each a pair of regret and strategy tables) into one.
-pub fn merge_updates(
-    updates: &Vec<(
-        HashMap<String, HashMap<String, f64>>,
-        HashMap<String, HashMap<String, f64>>,
-    )>,
-) -> (
-    HashMap<String, HashMap<String, f64>>,
-    HashMap<String, HashMap<String, f64>>,
-) {
-    let mut merged_regret_sum: HashMap<String, HashMap<String, f64>> = HashMap::new();
-    let mut merged_strategy_sum: HashMap<String, HashMap<String, f64>> = HashMap::new();
-    for (regret_sum, strategy_sum) in updates {
-        for (info_set, action_dict) in regret_sum {
-            let entry = merged_regret_sum
-                .entry(info_set.clone())
-                .or_insert_with(HashMap::new);
-            for (a, val) in action_dict {
-                *entry.entry(a.clone()).or_insert(0.0) += val;
-            }
-        }
-        for (info_set, action_dict) in strategy_sum {
-            let entry = merged_strategy_sum
-                .entry(info_set.clone())
-                .or_insert_with(HashMap::new);
-            for (a, val) in action_dict {
-                *entry.entry(a.clone()).or_insert(0.0) += val;
-            }
-        }
-    }
-    (merged_regret_sum, merged_strategy_sum)
 }

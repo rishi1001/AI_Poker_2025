@@ -1,42 +1,39 @@
-use crate::abstract_game::AbstractGame;
 use poker::{Card, Eval, Evaluator, Rank, Suit};
-use rand::rngs::StdRng;
-use rand::SeedableRng;
+use rand::seq::SliceRandom;
+use rand::{Rng, SeedableRng};
 use std::cmp;
-// use std::collections::HashMap;
-use hashbrown::HashMap;
+use std::collections::HashMap;
 
-//
-// State representation for the poker game.
-//
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+use crate::abstract_game::AbstractGame;
+
+/// A complete representation of a Poker state.
+/// (This mirrors the Python dictionary state.)
+#[derive(Clone, Debug)]
 pub struct PokerState {
     pub seed: u32,
-    pub deck: Vec<i32>,
-    pub street: i32,
-    pub bets: Vec<i32>, // length 2
+    pub deck: Vec<i32>, // remaining deck (cards 0..26)
+    pub street: i32,    // game street
+    pub bets: [i32; 2], // bets for each player
     pub discarded_cards: [i32; 2],
     pub drawn_cards: [i32; 2],
-    pub player_cards: Vec<Vec<i32>>, // two players’ hands (each two cards)
-    pub community_cards: Vec<i32>,   // five cards
+    pub player_cards: [[i32; 2]; 2], // two players, each with two cards
+    pub community_cards: [i32; 5],
     pub acting_agent: i32,
     pub small_blind_player: i32,
     pub big_blind_player: i32,
     pub min_raise: i32,
     pub last_street_bet: i32,
     pub terminated: bool,
-    pub winner: Option<i32>, // Some(0) or Some(1) for a win, Some(-1) for a tie, None if not terminated.
+    pub winner: Option<i32>, // Some(0) or Some(1) for a win, Some(-1) for tie; None if not yet decided.
 }
 
-//
-// The observation struct used for a single player’s view of the state.
-//
+/// An observation of the game from a single player’s view.
 #[derive(Clone, Debug)]
 pub struct Observation {
     pub street: i32,
     pub acting_agent: i32,
     pub my_cards: Vec<i32>,
-    pub community_cards: Vec<i32>, // always length 5
+    pub community_cards: Vec<i32>, // length 5 (with unrevealed cards set to -1)
     pub my_bet: i32,
     pub opp_bet: i32,
     pub opp_discarded_card: i32,
@@ -45,7 +42,26 @@ pub struct Observation {
     pub my_drawn_card: i32,
     pub min_raise: i32,
     pub max_raise: i32,
-    pub valid_actions: Vec<i32>, // valid actions encoded as integers
+    pub valid_actions: Vec<i32>, // 5-element vector (order: FOLD, RAISE, CHECK, CALL, DISCARD)
+}
+
+/// Action types.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ActionType {
+    Fold = 0,
+    Raise = 1,
+    Check = 2,
+    Call = 3,
+    Discard = 4,
+    Invalid = 5,
+}
+
+/// An action represented as a triple: (action type, raise amount, card_to_discard).
+#[derive(Debug, Clone)]
+pub struct Action {
+    pub action_type: ActionType,
+    pub amount: i32,
+    pub card_to_discard: i32,
 }
 
 //
@@ -92,35 +108,12 @@ impl WrappedEval {
     }
 }
 
-//
-// Action types and a helper Action struct.
-//
-#[derive(Clone, Copy)]
-pub enum ActionType {
-    FOLD = 0,
-    RAISE = 1,
-    CHECK = 2,
-    CALL = 3,
-    DISCARD = 4,
-    INVALID = 5,
-}
-
-#[derive(Clone)]
-pub struct Action {
-    pub action_type: ActionType,
-    pub raise_amount: i32,
-    pub card_to_discard: i32,
-}
-
-//
-// The poker game implementation.
-//
+/// The concrete Poker game.
 pub struct PokerGame {
     pub small_blind_amount: i32,
-    pub big_blind_amount: i32,
     pub max_player_bet: i32,
-    // pub ranks: String,
-    // pub suits: String,
+    pub ranks: &'static str,
+    pub suits: &'static str,
     pub evaluator: WrappedEval,
 }
 
@@ -128,10 +121,9 @@ impl PokerGame {
     pub fn new(small_blind_amount: i32, max_player_bet: i32) -> Self {
         PokerGame {
             small_blind_amount,
-            big_blind_amount: small_blind_amount * 2,
             max_player_bet,
-            // ranks: "23456789A".to_string(),
-            // suits: "dhs".to_string(),
+            ranks: "23456789A",
+            suits: "dhs", // diamonds, hearts, spades
             evaluator: WrappedEval::new(),
         }
     }
@@ -161,341 +153,156 @@ impl PokerGame {
         Card::new(rank, suit)
     }
 
-    /// Create and return the initial game state.
-    pub fn get_initial_state(&self) -> PokerState {
-        let seed = rand::random::<u32>() % 1_000_000_000;
-        let mut rng: StdRng = SeedableRng::seed_from_u64(seed as u64);
-        let mut deck: Vec<i32> = (0..27).collect();
-        use rand::seq::SliceRandom;
-        deck.shuffle(&mut rng);
-        let small_blind_player = 0;
-        let big_blind_player = 1;
-        let mut player_cards = vec![vec![], vec![]];
-        for i in 0..2 {
-            for _ in 0..2 {
-                player_cards[i].push(deck.remove(0));
-            }
-        }
-        let mut community_cards = Vec::new();
-        for _ in 0..5 {
-            community_cards.push(deck.remove(0));
-        }
-        let mut bets = vec![0, 0];
-        bets[small_blind_player as usize] = self.small_blind_amount;
-        bets[big_blind_player as usize] = self.big_blind_amount;
-        PokerState {
-            seed,
-            deck,
-            street: 0,
-            bets,
-            discarded_cards: [-1, -1],
-            drawn_cards: [-1, -1],
-            player_cards,
-            community_cards,
-            acting_agent: small_blind_player,
-            small_blind_player,
-            big_blind_player,
-            min_raise: self.big_blind_amount,
-            last_street_bet: 0,
-            terminated: false,
-            winner: None,
-        }
-    }
-
-    pub fn is_terminal(&self, state: &PokerState) -> bool {
-        state.terminated
-    }
-
-    pub fn get_utility(&self, state: &PokerState) -> HashMap<i32, f64> {
-        if !self.is_terminal(state) {
-            panic!("Game is not terminated yet.");
-        }
-        let pot = cmp::min(state.bets[0], state.bets[1]) as f64;
-        let mut util = HashMap::new();
-        match state.winner {
-            Some(0) => {
-                util.insert(0, pot);
-                util.insert(1, -pot);
-            }
-            Some(1) => {
-                util.insert(0, -pot);
-                util.insert(1, pot);
-            }
-            Some(-1) => {
-                util.insert(0, 0.0);
-                util.insert(1, 0.0);
-            }
-            _ => panic!("Invalid terminal state."),
-        }
-        util
-    }
-
-    pub fn is_chance_node(&self, _state: &PokerState) -> bool {
-        false
-    }
-
-    pub fn sample_chance_action(&self, _state: &PokerState) -> String {
-        panic!("This game has no chance nodes.")
-    }
-
-    pub fn get_current_player(&self, state: &PokerState) -> i32 {
-        state.acting_agent
-    }
-
-    /// Build and return an Observation for a given player.
-    fn get_observation(&self, state: &PokerState, player: i32) -> Observation {
+    /// Initialize a single–player observation from the global state.
+    fn get_single_player_obs(&self, state: &PokerState, player: i32) -> Observation {
         let num_cards_to_reveal = if state.street == 0 {
             0
         } else {
             state.street + 2
         };
-        let mut community_cards: Vec<i32> = state
-            .community_cards
-            .iter()
-            .cloned()
-            .take(num_cards_to_reveal as usize)
-            .collect();
-        while community_cards.len() < 5 {
-            community_cards.push(-1);
+        let mut community_cards = state.community_cards.to_vec();
+        // Only reveal the first num_cards_to_reveal cards; set the rest to -1.
+        for i in num_cards_to_reveal as usize..5 {
+            community_cards[i] = -1;
         }
-        let max_raise = self.max_player_bet - *state.bets.iter().max().unwrap();
-        let mut min_raise = state.min_raise;
-        if state.min_raise > max_raise {
-            min_raise = max_raise;
-        }
+        let opp = 1 - player;
         Observation {
             street: state.street,
             acting_agent: state.acting_agent,
-            my_cards: state.player_cards[player as usize].clone(),
+            my_cards: state.player_cards[player as usize].to_vec(),
             community_cards,
             my_bet: state.bets[player as usize],
-            opp_bet: state.bets[(1 - player) as usize],
-            opp_discarded_card: state.discarded_cards[(1 - player) as usize],
-            opp_drawn_card: state.drawn_cards[(1 - player) as usize],
+            opp_bet: state.bets[opp as usize],
+            opp_discarded_card: state.discarded_cards[opp as usize],
+            opp_drawn_card: state.drawn_cards[opp as usize],
             my_discarded_card: state.discarded_cards[player as usize],
             my_drawn_card: state.drawn_cards[player as usize],
-            min_raise,
-            max_raise,
-            valid_actions: self.get_valid_actions(state, player),
+            min_raise: state.min_raise,
+            max_raise: self.max_player_bet - cmp::max(state.bets[0], state.bets[1]),
+            valid_actions: self._get_valid_actions(state, player),
         }
     }
 
-    pub fn get_information_set(&self, state: &PokerState, player: i32) -> String {
-        let obs = self.get_observation(state, player);
-        PokerGame::compute_information_set_reduced(&obs)
+    /// Compute the valid actions (as a vector of 0/1 values) for a player.
+    /// The order is: FOLD, RAISE, CHECK, CALL, DISCARD.
+    fn _get_valid_actions(&self, state: &PokerState, player: i32) -> Vec<i32> {
+        let mut valid = vec![1, 1, 1, 1, 1];
+        let opp = 1 - player;
+        if state.bets[player as usize] < state.bets[opp as usize] {
+            valid[ActionType::Check as usize] = 0;
+        }
+        if state.bets[player as usize] == state.bets[opp as usize] {
+            valid[ActionType::Call as usize] = 0;
+        }
+        if state.discarded_cards[player as usize] != -1 {
+            valid[ActionType::Discard as usize] = 0;
+        }
+        if state.street > 1 {
+            valid[ActionType::Discard as usize] = 0;
+        }
+        if cmp::max(state.bets[0], state.bets[1]) == self.max_player_bet {
+            valid[ActionType::Raise as usize] = 0;
+        }
+        valid
     }
 
-    pub fn get_actions(&self, state: &PokerState) -> Vec<String> {
-        let acting = state.acting_agent;
-        let valid = self.get_valid_actions(state, acting);
-        let mut actions = Vec::new();
-        if valid[ActionType::FOLD as usize] == 1 {
-            actions.push("FOLD".to_string());
-        }
-        if valid[ActionType::CHECK as usize] == 1 {
-            actions.push("CHECK".to_string());
-        }
-        if valid[ActionType::CALL as usize] == 1 {
-            actions.push("CALL".to_string());
-        }
-        if valid[ActionType::DISCARD as usize] == 1 {
-            actions.push("DISCARD_0".to_string());
-            actions.push("DISCARD_1".to_string());
-        }
-        if valid[ActionType::RAISE as usize] == 1 {
-            // We could use the observation struct here as well if desired.
-            actions.push("RAISE_MIN".to_string());
-            actions.push("RAISE_MAX".to_string());
-            actions.push("RAISE_POT".to_string());
-            actions.push("RAISE_HALF_POT".to_string());
-        }
-        actions
-    }
-
-    pub fn action_str_to_action_tuple(&self, state: &PokerState, action_str: &str) -> Action {
-        match action_str {
-            "FOLD" => Action {
-                action_type: ActionType::FOLD,
-                raise_amount: 0,
+    /// Convert an integer action (0..8) into an Action tuple.
+    pub fn action_int_to_action_tuple(&self, state: &PokerState, action_int: usize) -> Action {
+        match action_int {
+            0 => Action {
+                action_type: ActionType::Fold,
+                amount: 0,
                 card_to_discard: -1,
             },
-            "CHECK" => Action {
-                action_type: ActionType::CHECK,
-                raise_amount: 0,
+            1 => Action {
+                action_type: ActionType::Check,
+                amount: 0,
                 card_to_discard: -1,
             },
-            "CALL" => Action {
-                action_type: ActionType::CALL,
-                raise_amount: 0,
+            2 => Action {
+                action_type: ActionType::Call,
+                amount: 0,
                 card_to_discard: -1,
             },
-            "DISCARD_0" => Action {
-                action_type: ActionType::DISCARD,
-                raise_amount: 0,
-                card_to_discard: 0,
-            },
-            "DISCARD_1" => Action {
-                action_type: ActionType::DISCARD,
-                raise_amount: 0,
-                card_to_discard: 1,
-            },
-            "RAISE_MIN" => {
-                let max_raise = self.max_player_bet - *state.bets.iter().max().unwrap();
-                let min_raise = cmp::min(state.min_raise, max_raise);
+            3 => {
+                // Choose the lower card index from the player's hand.
+                let current_hand = state.player_cards[state.acting_agent as usize];
+                let lower_card_idx = if current_hand[0] % 9 <= current_hand[1] % 9 {
+                    0
+                } else {
+                    1
+                };
                 Action {
-                    action_type: ActionType::RAISE,
-                    raise_amount: min_raise,
+                    action_type: ActionType::Discard,
+                    amount: 0,
+                    card_to_discard: lower_card_idx as i32,
+                }
+            }
+            4 => {
+                // Choose the higher card index from the player's hand.
+                let current_hand = state.player_cards[state.acting_agent as usize];
+                let higher_card_idx = if current_hand[0] % 9 >= current_hand[1] % 9 {
+                    0
+                } else {
+                    1
+                };
+                Action {
+                    action_type: ActionType::Discard,
+                    amount: 0,
+                    card_to_discard: higher_card_idx as i32,
+                }
+            }
+            5 => {
+                let max_bet = cmp::max(state.bets[0], state.bets[1]);
+                let min_raise = cmp::min(state.min_raise, self.max_player_bet - max_bet);
+                Action {
+                    action_type: ActionType::Raise,
+                    amount: min_raise,
                     card_to_discard: -1,
                 }
             }
-            "RAISE_MAX" => {
-                let amount = self.max_player_bet - *state.bets.iter().max().unwrap();
+            6 => {
+                let max_bet = cmp::max(state.bets[0], state.bets[1]);
                 Action {
-                    action_type: ActionType::RAISE,
-                    raise_amount: amount,
+                    action_type: ActionType::Raise,
+                    amount: self.max_player_bet - max_bet,
                     card_to_discard: -1,
                 }
             }
-            "RAISE_POT" => {
-                let max_raise = self.max_player_bet - *state.bets.iter().max().unwrap();
+            7 => {
+                let max_bet = cmp::max(state.bets[0], state.bets[1]);
+                let max_raise = self.max_player_bet - max_bet;
                 let min_raise = cmp::min(state.min_raise, max_raise);
                 let pot: i32 = state.bets.iter().sum();
                 let safe_bet = cmp::max(min_raise, cmp::min(max_raise, pot));
                 Action {
-                    action_type: ActionType::RAISE,
-                    raise_amount: safe_bet,
+                    action_type: ActionType::Raise,
+                    amount: safe_bet,
                     card_to_discard: -1,
                 }
             }
-            "RAISE_HALF_POT" => {
-                let max_raise = self.max_player_bet - *state.bets.iter().max().unwrap();
+            8 => {
+                let max_bet = cmp::max(state.bets[0], state.bets[1]);
+                let max_raise = self.max_player_bet - max_bet;
                 let min_raise = cmp::min(state.min_raise, max_raise);
                 let pot: i32 = state.bets.iter().sum();
                 let half_pot = pot / 2;
                 let safe_bet = cmp::max(min_raise, cmp::min(max_raise, half_pot));
                 Action {
-                    action_type: ActionType::RAISE,
-                    raise_amount: safe_bet,
+                    action_type: ActionType::Raise,
+                    amount: safe_bet,
                     card_to_discard: -1,
                 }
             }
-            _ => panic!("Invalid action_str {}", action_str),
+            _ => panic!("wtf - invalid action_int {}", action_int),
         }
-    }
-
-    pub fn get_players(&self) -> Vec<i32> {
-        vec![0, 1]
-    }
-
-    /// Determine which actions are valid.
-    /// The order is: FOLD, RAISE, CHECK, CALL, DISCARD.
-    pub fn get_valid_actions(&self, state: &PokerState, player: i32) -> Vec<i32> {
-        let mut valid = vec![1, 1, 1, 1, 1];
-        let opponent = 1 - player;
-        if state.bets[player as usize] < state.bets[opponent as usize] {
-            valid[ActionType::CHECK as usize] = 0;
-        }
-        if state.bets[player as usize] == state.bets[opponent as usize] {
-            valid[ActionType::CALL as usize] = 0;
-        }
-        if state.discarded_cards[player as usize] != -1 {
-            valid[ActionType::DISCARD as usize] = 0;
-        }
-        if state.street > 1 {
-            valid[ActionType::DISCARD as usize] = 0;
-        }
-        if *state.bets.iter().max().unwrap() == self.max_player_bet {
-            valid[ActionType::RAISE as usize] = 0;
-        }
-        valid
-    }
-
-    /// Apply the given action (by its string representation) to the state and return the new state.
-    pub fn apply_action(&self, state: &PokerState, action_str: &str) -> PokerState {
-        let action = self.action_str_to_action_tuple(state, action_str);
-        let mut new_state = state.clone();
-        if new_state.terminated {
-            panic!("Cannot apply action: game is already terminated.");
-        }
-        let valid = self.get_valid_actions(&new_state, new_state.acting_agent);
-        let mut a_type = action.action_type;
-        let raise_amount = action.raise_amount;
-        let card_to_discard = action.card_to_discard;
-        if valid[a_type as usize] == 0 {
-            a_type = ActionType::INVALID;
-        }
-        if let ActionType::RAISE = a_type {
-            if !(new_state.min_raise <= raise_amount
-                && raise_amount <= (self.max_player_bet - *new_state.bets.iter().max().unwrap()))
-            {
-                a_type = ActionType::INVALID;
-            }
-        }
-        let current = new_state.acting_agent;
-        let opponent = 1 - current;
-        let mut new_street = false;
-        match a_type {
-            ActionType::FOLD | ActionType::INVALID => {
-                new_state.winner = Some(opponent);
-                new_state.terminated = true;
-            }
-            ActionType::CALL => {
-                new_state.bets[current as usize] = new_state.bets[opponent as usize];
-                if !(new_state.street == 0
-                    && current == new_state.small_blind_player
-                    && new_state.bets[current as usize] == self.big_blind_amount)
-                {
-                    new_street = true;
-                }
-            }
-            ActionType::CHECK => {
-                if current == new_state.big_blind_player {
-                    new_street = true;
-                }
-            }
-            ActionType::RAISE => {
-                new_state.bets[current as usize] = new_state.bets[opponent as usize] + raise_amount;
-                let raise_so_far = new_state.bets[opponent as usize] - new_state.last_street_bet;
-                let max_raise = self.max_player_bet - *new_state.bets.iter().max().unwrap();
-                let min_raise_no_limit = raise_so_far + raise_amount;
-                new_state.min_raise = cmp::min(min_raise_no_limit, max_raise);
-            }
-            ActionType::DISCARD => {
-                if card_to_discard != -1 {
-                    new_state.discarded_cards[current as usize] =
-                        new_state.player_cards[current as usize][card_to_discard as usize];
-                    let drawn = if !new_state.deck.is_empty() {
-                        new_state.deck.remove(0)
-                    } else {
-                        -1
-                    };
-                    new_state.drawn_cards[current as usize] = drawn;
-                    new_state.player_cards[current as usize][card_to_discard as usize] = drawn;
-                }
-            }
-        }
-        if new_street {
-            new_state.street += 1;
-            new_state.min_raise = self.big_blind_amount;
-            new_state.last_street_bet = new_state.bets[0];
-            new_state.acting_agent = new_state.small_blind_player;
-            if new_state.street > 3 {
-                let winner = self.get_winner(&mut new_state);
-                new_state.terminated = true;
-                new_state.winner = Some(winner);
-            }
-        } else if let ActionType::DISCARD = a_type {
-            // Do nothing
-        } else {
-            new_state.acting_agent = opponent;
-        }
-        let max_raise = self.max_player_bet - *new_state.bets.iter().max().unwrap();
-        new_state.min_raise = cmp::min(new_state.min_raise, max_raise);
-        new_state
     }
 
     /// Determine the winner at showdown.
-    pub fn get_winner(&self, state: &mut PokerState) -> i32 {
+    /// This function builds the board from revealed community cards (drawing from the deck if necessary)
+    /// and then uses the evaluator to compare players’ hands.
+    /// Determine the winner at showdown.
+    pub fn _get_winner(&self, state: &mut PokerState) -> i32 {
         let mut board: Vec<Card> = state
             .community_cards
             .iter()
@@ -529,138 +336,452 @@ impl PokerGame {
         }
     }
 
-    /// A reduced version of the information set – build a string from key observations.
-    pub fn compute_information_set_reduced(obs: &Observation) -> String {
-        let acting_agent = obs.acting_agent;
-        let my_cards = obs.my_cards.clone();
-        let mut flop_cards = obs
-            .community_cards
-            .iter()
-            .take(3)
-            .cloned()
-            .collect::<Vec<i32>>();
-        flop_cards.sort();
-        let turn_card = obs.community_cards[3];
-        let river_card = obs.community_cards[4];
-        let mut my_cards_sorted = my_cards.clone();
-        my_cards_sorted.sort();
-        // let my_cards_sorted_str = my_cards_sorted
-        //     .iter()
-        //     .map(|c| c.to_string())
-        //     .collect::<Vec<String>>()
-        //     .join("-");
-        let are_my_two_cards_suited = if my_cards.len() >= 2 {
-            (my_cards[0] / 9) == (my_cards[1] / 9)
-        } else {
-            false
-        };
-        let mut my_card_numbers = my_cards
-            .iter()
-            .map(|c| (c % 9).to_string())
-            .collect::<Vec<String>>();
-        my_card_numbers.sort();
-        let my_card_numbers_sorted = my_card_numbers.join(",");
-        let mut flop_card_numbers = flop_cards
-            .iter()
-            .map(|c| (c % 9).to_string())
-            .collect::<Vec<String>>();
-        flop_card_numbers.sort();
-        let flop_card_numbers_sorted = flop_card_numbers.join(",");
-        let comm_card_numbers = format!(
-            "{},{},{}",
-            flop_card_numbers_sorted,
-            (turn_card % 9),
-            (river_card % 9)
-        );
-        let valid_actions = obs
-            .valid_actions
-            .iter()
-            .map(|a| a.to_string())
-            .collect::<Vec<String>>()
-            .join(",");
+    /// Compute an information set index from an observation.
+    /// (For simplicity the observation is encoded as a single integer using mixed–radix encoding.)
+    pub fn compute_information_set(obs: &Observation) -> usize {
+        // Sort the flop (first three community cards).
+        let mut flop = obs.community_cards[..3].to_vec();
+        flop.sort();
+        let turn = obs.community_cards[3];
+        let river = obs.community_cards[4];
 
-        let mut suits_map = HashMap::new();
-        for card in my_cards_sorted
+        let mut suits_map: HashMap<i32, i32> = HashMap::new();
+        for &card in obs
+            .my_cards
             .iter()
-            .chain(flop_cards.iter())
-            .chain(&[turn_card, river_card])
+            .chain(flop.iter())
+            .chain(std::iter::once(&turn))
+            .chain(std::iter::once(&river))
         {
-            if *card == -1 {
+            if card == -1 {
                 continue;
             }
-            let suit = card % 9;
-            if !suits_map.contains_key(&suit) {
-                suits_map.insert(suit, 0);
-            }
-            *suits_map.get_mut(&suit).unwrap() += 1;
+            let suit = card / 9;
+            *suits_map.entry(suit).or_insert(0) += 1;
         }
-        let is_four_flush = *suits_map.values().max().unwrap() >= 4;
-        let is_five_flush = *suits_map.values().max().unwrap() >= 5;
+        let max_count = suits_map.values().cloned().max().unwrap_or(0);
+        let is_four_flush = max_count >= 4;
+        let is_five_flush = max_count >= 5;
 
-        let continuation_cost = (obs.opp_bet - obs.my_bet) as f64;
-        let pot = (obs.my_bet + obs.opp_bet) as f64;
-        let pod_odds = continuation_cost / (pot + continuation_cost);
+        let convert_card = |card: i32| -> i32 {
+            if card == -1 {
+                -1
+            } else {
+                1 + ((card + 1) % 9)
+            }
+        };
 
-        let binned_pod_odds = (pod_odds * 5.0).floor() as u32;
+        let mut my_cards_nums: Vec<i32> = obs.my_cards.iter().map(|&c| convert_card(c)).collect();
+        my_cards_nums.sort();
+        let mut community_cards_nums: Vec<i32> = obs
+            .community_cards
+            .iter()
+            .map(|&c| convert_card(c))
+            .collect();
+        community_cards_nums.sort();
 
-        format!(
-            "{}_{}_{}_{}_{}_{}_{}_{}",
-            acting_agent,
-            my_card_numbers_sorted,
-            if is_four_flush {"True"} else {"False"},
-            if is_five_flush {"True"} else {"False"},
-            if are_my_two_cards_suited {"True"} else {"False"},
-            comm_card_numbers,
-            binned_pod_odds,
-            valid_actions
-        )
+        let valid_actions_str: String = obs.valid_actions.iter().map(|v| v.to_string()).collect();
+
+        let valid_actions_map: HashMap<&str, i32> = [
+            ("11101", 0),
+            ("10010", 1),
+            ("11011", 2),
+            ("10101", 3),
+            ("11010", 4),
+            ("11100", 5),
+            ("10100", 6),
+            ("10011", 7),
+        ]
+        .iter()
+        .cloned()
+        .collect();
+
+        let continuation_cost = obs.opp_bet - obs.my_bet;
+        let pot = obs.opp_bet + obs.my_bet;
+        let pot_odds = if pot != 0 {
+            continuation_cost as f64 / pot as f64
+        } else {
+            0.0
+        };
+        let binned_pot_odds = (pot_odds * 3.0).floor() as i32;
+
+        let player = obs.acting_agent;
+        let my_hand_numbers_int = tuple_to_int_2(&my_cards_nums);
+        let are_my_two_cards_suited = if obs.my_cards[0] / 9 == obs.my_cards[1] / 9 {
+            1
+        } else {
+            0
+        };
+        let flush_number = if !is_four_flush {
+            0
+        } else if !is_five_flush {
+            1
+        } else {
+            2
+        };
+        let community_card_numbers_int = tuple_to_int_5(&community_cards_nums);
+        let valid_actions_number = *valid_actions_map
+            .get(valid_actions_str.as_str())
+            .unwrap_or(&0);
+        let fields = vec![
+            player,
+            my_hand_numbers_int,
+            are_my_two_cards_suited,
+            flush_number,
+            community_card_numbers_int,
+            valid_actions_number,
+            binned_pot_odds,
+        ];
+        let radices = vec![2, 55, 2, 3, 2002, 8, 3];
+        encode_fields(&fields, &radices)
     }
 }
 
-//
-// Implement the AbstractGame trait for PokerGame.
-//
-impl AbstractGame for PokerGame {
-    type State = PokerState;
-    type Player = i32;
-
-    fn get_initial_state(&self) -> Self::State {
-        self.get_initial_state()
+impl AbstractGame<PokerState> for PokerGame {
+    fn is_terminal(&self, state: &PokerState) -> bool {
+        state.terminated
     }
 
-    fn is_terminal(&self, state: &Self::State) -> bool {
-        self.is_terminal(state)
+    fn get_utility(&self, state: &PokerState) -> Vec<f64> {
+        if !state.terminated {
+            panic!("Game is not terminated yet.");
+        }
+        let pot = cmp::min(state.bets[0], state.bets[1]) as f64;
+        match state.winner {
+            Some(winner) => {
+                if winner == 0 {
+                    vec![pot, -pot]
+                } else if winner == 1 {
+                    vec![-pot, pot]
+                } else {
+                    vec![0.0, 0.0]
+                }
+            }
+            None => panic!("Winner not determined in a terminated state."),
+        }
     }
 
-    fn get_utility(&self, state: &Self::State) -> HashMap<Self::Player, f64> {
-        self.get_utility(state)
+    fn is_chance_node(&self, _state: &PokerState) -> bool {
+        false
     }
 
-    fn is_chance_node(&self, state: &Self::State) -> bool {
-        self.is_chance_node(state)
+    fn sample_chance_action(&self, _state: &PokerState) -> (usize, f64) {
+        unimplemented!("This game has no chance nodes.")
     }
 
-    fn sample_chance_action(&self, state: &Self::State) -> String {
-        self.sample_chance_action(state)
-    }
-
-    fn get_current_player(&self, state: &Self::State) -> Self::Player {
-        self.get_current_player(state)
-    }
-
-    fn get_information_set(&self, state: &Self::State, player: Self::Player) -> String {
-        self.get_information_set(state, player)
-    }
-
-    fn get_actions(&self, state: &Self::State) -> Vec<String> {
-        self.get_actions(state)
-    }
-
-    fn apply_action(&self, state: &Self::State, action: &str) -> Self::State {
+    fn get_child(&self, state: &PokerState, action: usize) -> PokerState {
         self.apply_action(state, action)
     }
 
-    fn get_players(&self) -> Vec<Self::Player> {
-        self.get_players()
+    fn get_current_player(&self, state: &PokerState) -> i32 {
+        state.acting_agent
+    }
+
+    fn get_information_set(&self, state: &PokerState, player: i32) -> usize {
+        let obs = self.get_single_player_obs(state, player);
+        PokerGame::compute_information_set(&obs)
+    }
+
+    fn get_actions(&self, state: &PokerState) -> Vec<usize> {
+        let acting = state.acting_agent;
+        let valid = self._get_valid_actions(state, acting);
+        let mut actions = Vec::new();
+        if valid[ActionType::Fold as usize] == 1 {
+            actions.push(0);
+        }
+        if valid[ActionType::Check as usize] == 1 {
+            actions.push(1);
+        }
+        if valid[ActionType::Call as usize] == 1 {
+            actions.push(2);
+        }
+        if valid[ActionType::Discard as usize] == 1 {
+            actions.push(3);
+            actions.push(4);
+        }
+        if valid[ActionType::Raise as usize] == 1 {
+            actions.push(5);
+            actions.push(6);
+            actions.push(7);
+            actions.push(8);
+        }
+        actions
+    }
+
+    fn get_initial_state(&self) -> PokerState {
+        let seed = rand::thread_rng().gen_range(0..1_000_000_000);
+        let mut deck: Vec<i32> = (0..27).collect();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed as u64);
+        deck.shuffle(&mut rng);
+
+        let small_blind_player = 0;
+        let big_blind_player = 1;
+        let mut player_cards = [[-1; 2]; 2];
+        for i in 0..2 {
+            for j in 0..2 {
+                player_cards[i][j] = deck.remove(0);
+            }
+        }
+        let mut community_cards = [-1; 5];
+        for i in 0..5 {
+            community_cards[i] = deck.remove(0);
+        }
+        let mut bets = [0, 0];
+        bets[small_blind_player] = self.small_blind_amount;
+        bets[big_blind_player] = self.small_blind_amount * 2;
+        PokerState {
+            seed,
+            deck,
+            street: 0,
+            bets,
+            discarded_cards: [-1, -1],
+            drawn_cards: [-1, -1],
+            player_cards,
+            community_cards,
+            acting_agent: small_blind_player as i32,
+            small_blind_player: small_blind_player as i32,
+            big_blind_player: big_blind_player as i32,
+            min_raise: self.small_blind_amount * 2,
+            last_street_bet: 0,
+            terminated: false,
+            winner: None,
+        }
+    }
+
+    fn apply_action(&self, state: &PokerState, action_int: usize) -> PokerState {
+        let mut new_state = state.clone();
+        if new_state.terminated {
+            panic!("Cannot apply action: game is already terminated.");
+        }
+        let action = self.action_int_to_action_tuple(&new_state, action_int);
+        let current = new_state.acting_agent;
+        let opp = 1 - current;
+        let valid = self._get_valid_actions(&new_state, current);
+        let mut a_type = action.action_type;
+        if valid[a_type as usize] == 0 {
+            a_type = ActionType::Invalid;
+        }
+        if a_type == ActionType::Raise {
+            let max_bet = cmp::max(new_state.bets[0], new_state.bets[1]);
+            if !(new_state.min_raise <= action.amount
+                && action.amount <= (self.max_player_bet - max_bet))
+            {
+                a_type = ActionType::Invalid;
+            }
+        }
+        let mut winner: Option<i32> = None;
+        let mut new_street = false;
+
+        if a_type == ActionType::Fold || a_type == ActionType::Invalid {
+            winner = Some(opp);
+            new_state.terminated = true;
+            new_state.winner = winner;
+        } else if a_type == ActionType::Call {
+            new_state.bets[current as usize] = new_state.bets[opp as usize];
+            if !(new_state.street == 0
+                && current == new_state.small_blind_player
+                && new_state.bets[current as usize] == self.small_blind_amount * 2)
+            {
+                new_street = true;
+            }
+        } else if a_type == ActionType::Check {
+            if current == new_state.big_blind_player {
+                new_street = true;
+            }
+        } else if a_type == ActionType::Raise {
+            new_state.bets[current as usize] = new_state.bets[opp as usize] + action.amount;
+            let raise_so_far = new_state.bets[opp as usize] - new_state.last_street_bet;
+            let max_raise = self.max_player_bet - cmp::max(new_state.bets[0], new_state.bets[1]);
+            let min_raise_no_limit = raise_so_far + action.amount;
+            new_state.min_raise = cmp::min(min_raise_no_limit, max_raise);
+        } else if a_type == ActionType::Discard {
+            if action.card_to_discard != -1 {
+                new_state.discarded_cards[current as usize] =
+                    new_state.player_cards[current as usize][action.card_to_discard as usize];
+                let drawn = if !new_state.deck.is_empty() {
+                    new_state.deck.remove(0)
+                } else {
+                    -1
+                };
+                new_state.drawn_cards[current as usize] = drawn;
+                new_state.player_cards[current as usize][action.card_to_discard as usize] = drawn;
+            }
+        }
+
+        if new_street {
+            new_state.street += 1;
+            new_state.min_raise = self.small_blind_amount * 2;
+            new_state.last_street_bet = new_state.bets[0]; // bets should be equal now
+            new_state.acting_agent = new_state.small_blind_player;
+            if new_state.street > 3 {
+                let w = self._get_winner(&mut new_state);
+                new_state.terminated = true;
+                new_state.winner = Some(w);
+            }
+        } else if a_type != ActionType::Discard {
+            new_state.acting_agent = opp;
+        }
+        new_state.min_raise = cmp::min(
+            new_state.min_raise,
+            self.max_player_bet - cmp::max(new_state.bets[0], new_state.bets[1]),
+        );
+        new_state
+    }
+}
+
+/// Encode a vector of values into a single integer using mixed–radix encoding.
+pub fn encode_fields(values: &Vec<i32>, radices: &Vec<i32>) -> usize {
+    values
+        .iter()
+        .zip(radices.iter())
+        .fold(0usize, |acc, (&v, &r)| acc * (r as usize) + (v as usize))
+}
+
+/// Decode an integer back into a vector of values using the provided radices.
+pub fn decode_fields(mut index: usize, radices: &Vec<i32>) -> Vec<i32> {
+    let mut values = vec![0; radices.len()];
+    for (i, &radix) in radices.iter().rev().enumerate() {
+        values[radices.len() - 1 - i] = (index % (radix as usize)) as i32;
+        index /= radix as usize;
+    }
+    values
+}
+
+/// Compute “n choose k”.
+pub fn comb(n: i32, k: i32) -> i32 {
+    if k > n {
+        return 0;
+    }
+    let mut result = 1;
+    for i in 0..k {
+        result = result * (n - i) / (i + 1);
+    }
+    result
+}
+
+/// Map a sorted 5–tuple (represented as a Vec of 5 integers) to an integer in 0..2001.
+pub fn tuple_to_int_5(t: &Vec<i32>) -> i32 {
+    let mut y = vec![0; 5];
+    for i in 0..5 {
+        y[i] = t[i] + i as i32;
+    }
+    let n = 14;
+    let k = 5;
+    let mut rank = 0;
+    let mut prev = 0;
+    for i in 0..k {
+        for j in prev..y[i] {
+            rank += comb(n - j - 1, k as i32 - i as i32 - 1);
+        }
+        prev = y[i] + 1;
+    }
+    rank
+}
+
+/// Inverse of `tuple_to_int_5`: Map an integer in 0..2001 back to a sorted 5–tuple.
+pub fn int_to_tuple_5(mut rank: i32) -> Vec<i32> {
+    let n = 14;
+    let k = 5;
+    let mut y = vec![];
+    let mut x_val = 0;
+    for _ in 0..k {
+        loop {
+            let count = comb(n - x_val - 1, k - y.len() as i32 - 1);
+            if rank < count {
+                y.push(x_val);
+                x_val += 1;
+                break;
+            } else {
+                rank -= count;
+                x_val += 1;
+            }
+        }
+    }
+    y.iter().enumerate().map(|(i, &v)| v - i as i32).collect()
+}
+
+/// Map a sorted 2–tuple (as Vec of 2 integers) to an integer in 0..54.
+pub fn tuple_to_int_2(t: &Vec<i32>) -> i32 {
+    let mut y = vec![0; 2];
+    for i in 0..2 {
+        y[i] = t[i] + i as i32;
+    }
+    let n = 11;
+    let k = 2;
+    let mut rank = 0;
+    let mut prev = 0;
+    for i in 0..k {
+        for j in prev..y[i] {
+            rank += comb(n - j - 1, k as i32 - i as i32 - 1);
+        }
+        prev = y[i] + 1;
+    }
+    rank
+}
+
+/// Inverse of `tuple_to_int_2`: Map an integer in 0..54 back to a sorted 2–tuple.
+pub fn int_to_tuple_2(mut rank: i32) -> Vec<i32> {
+    let n = 11;
+    let k = 2;
+    let mut y = vec![];
+    let mut x_val = 0;
+    for _ in 0..k {
+        loop {
+            let count = comb(n - x_val - 1, k - y.len() as i32 - 1);
+            if rank < count {
+                y.push(x_val);
+                x_val += 1;
+                break;
+            } else {
+                rank -= count;
+                x_val += 1;
+            }
+        }
+    }
+    y.iter().enumerate().map(|(i, &v)| v - i as i32).collect()
+}
+
+/// Return a pretty–printed string for a list of action probabilities.
+pub fn pretty_action_list(action_probabilities: &Vec<f64>) -> String {
+    format!(
+        "F:{:.3}|Ch:{:.3}|Ca:{:.3}|D0:{:.3}|D1:{:.3}|Rmin:{:.3}|Rmax:{:.3}|Rp:{:.3}|Rhp:{:.3}",
+        action_probabilities[0],
+        action_probabilities[1],
+        action_probabilities[2],
+        action_probabilities[3],
+        action_probabilities[4],
+        action_probabilities[5],
+        action_probabilities[6],
+        action_probabilities[7],
+        action_probabilities[8]
+    )
+}
+
+// Assume our NiceInfoSet type returned by decode_infoset_int is defined as:
+#[derive(Debug)]
+pub struct NiceInfoSet {
+    pub player: i32,
+    pub my_hand: Vec<i32>,    // decoded from field 1 (tuple of 2 integers)
+    pub suited: i32,          // field 2
+    pub flush: i32,           // field 3
+    pub community: Vec<i32>,  // decoded from field 4 (tuple of 5 integers)
+    pub valid_actions: i32,   // field 5
+    pub binned_pot_odds: i32, // field 6
+}
+
+pub fn decode_infoset_int(infoset: usize) -> NiceInfoSet {
+    let radices = vec![2, 55, 2, 3, 2002, 8, 3];
+    let x = decode_fields(infoset, &radices);
+    // x should be a Vec<i32> of length 7.
+    let my_hand = int_to_tuple_2(x[1]);
+    let community = int_to_tuple_5(x[4]);
+    NiceInfoSet {
+        player: x[0],
+        my_hand,
+        suited: x[2],
+        flush: x[3],
+        community,
+        valid_actions: x[5],
+        binned_pot_odds: x[6],
     }
 }
