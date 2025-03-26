@@ -597,14 +597,17 @@ impl PokerGame {
         let is_four_flush = *suits_map.values().max().unwrap() >= 4;
         let is_five_flush = *suits_map.values().max().unwrap() >= 5;
 
+        let log2_opp_bet = (obs.opp_bet as f64).log2().floor() as u32;
+
         format!(
-            "{}_{}_{}_{}_{}_{}_{}",
+            "{}_{}_{}_{}_{}_{}_{}_{}",
             acting_agent,
             my_card_numbers_sorted,
             if is_four_flush {"True"} else {"False"},
             if is_five_flush {"True"} else {"False"},
             if are_my_two_cards_suited {"True"} else {"False"},
             comm_card_numbers,
+            log2_opp_bet,
             valid_actions
         )
     }
