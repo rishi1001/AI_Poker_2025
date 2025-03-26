@@ -254,7 +254,7 @@ impl<G: AbstractGame> MCCFRTrainer<G> {
 
 /// Merge a list of updates (each a pair of regret and strategy tables) into one.
 pub fn merge_updates(
-    updates: Vec<(
+    updates: &Vec<(
         HashMap<String, HashMap<String, f64>>,
         HashMap<String, HashMap<String, f64>>,
     )>,
@@ -267,18 +267,18 @@ pub fn merge_updates(
     for (regret_sum, strategy_sum) in updates {
         for (info_set, action_dict) in regret_sum {
             let entry = merged_regret_sum
-                .entry(info_set)
+                .entry(info_set.clone())
                 .or_insert_with(HashMap::new);
             for (a, val) in action_dict {
-                *entry.entry(a).or_insert(0.0) += val;
+                *entry.entry(a.clone()).or_insert(0.0) += val;
             }
         }
         for (info_set, action_dict) in strategy_sum {
             let entry = merged_strategy_sum
-                .entry(info_set)
+                .entry(info_set.clone())
                 .or_insert_with(HashMap::new);
             for (a, val) in action_dict {
-                *entry.entry(a).or_insert(0.0) += val;
+                *entry.entry(a.clone()).or_insert(0.0) += val;
             }
         }
     }
