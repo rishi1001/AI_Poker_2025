@@ -485,7 +485,7 @@ impl PokerGame {
     ) -> f32 {
         let mut rng = thread_rng();
         let mut wins = 0;
-        let num_simulations = 250;
+        let num_simulations = 50;
         let total_needed = 7 - community_cards.len() - opp_drawn_card.len();
 
         // Generate full deck of 27 cards

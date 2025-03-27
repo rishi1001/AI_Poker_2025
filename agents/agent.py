@@ -21,6 +21,8 @@ class Observation(TypedDict):
     opp_bet: int
     opp_discarded_card: int
     opp_drawn_card: int
+    my_discarded_card: int
+    my_drawn_card: int
     min_raise: int
     max_raise: int
     valid_actions: List[int]

@@ -15,3 +15,7 @@ mc_training_data.pkl
 
 strat_tables/
 strat_sum_*.pkl
+rust/target/
+rust/.DS_Store
+rust/strat_sum_0.json
+.DS_Store

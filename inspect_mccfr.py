@@ -9,29 +9,24 @@ from cfr import poker_game2
 with open("rust/strat_tables/merged_avg_strategy.pkl", "rb") as f:
     avg_strategy = pickle.load(f)
 
-print(type(avg_strategy))
 
 for i, d in enumerate(avg_strategy):
     if d is None: continue
-    if all([p == 1/9 for p in d]): continue
     infoset = poker_game2.decode_infoset_int(i)
-    if infoset[4] != (0, 0, 0, 0, 0): continue
     a = poker_game2.pretty_action_list(d)
-    print(infoset, a)
+    print(f"binned_equity: {infoset[0]}, valid_actions_number: {infoset[1]}, binned_pot_odds: {infoset[2]}", a)
+print(len(avg_strategy))
+# valid_actions = set()
 
-exit(0)
+# # Print the items in street 0, for player 0, where community cards are all -1
+# for infoSet, strategy in avg_strategy.items():
+#     x = infoSet.split('_')
+#     valid_actions.add(x[7])
+#     if x[0] == '1': continue
+#     if x[5] != "-1,-1,-1,-1,-1": continue
+#     if x[6] != "1": continue
+#     print(f"InfoSet {infoSet}: {strategy}")
 
-valid_actions = set()
+# print(f"Number of infosets: {len(avg_strategy.keys())}")
 
-# Print the items in street 0, for player 0, where community cards are all -1
-for infoSet, strategy in avg_strategy.items():
-    x = infoSet.split('_')
-    valid_actions.add(x[7])
-    if x[0] == '1': continue
-    if x[5] != "-1,-1,-1,-1,-1": continue
-    if x[6] != "1": continue
-    print(f"InfoSet {infoSet}: {strategy}")
-
-print(f"Number of infosets: {len(avg_strategy.keys())}")
-
-print(f"all possible values of value actions: {valid_actions}")
+# print(f"all possible values of value actions: {valid_actions}")

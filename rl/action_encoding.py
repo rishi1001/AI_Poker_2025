@@ -8,16 +8,15 @@ from gym_env import PokerEnv
 2 -> CALL
 3 -> DISCARD 0
 4 -> DISCARD 1
-5 -> RAISE 1
-6 -> RAISE 2
-...
-103 -> RAISE 99
-104 -> RAISE 100
+5 -> RAISE 33% POT
+6 -> RAISE 66% POT
+7 -> RAISE 100% POT
+8 -> RAISE 150% POT
 """
 
-ACTION_DIM = 105
+ACTION_DIM = 9
 
-def action_int_to_action_tuple(action_int):
+def action_int_to_action_tuple(action_int, pot_size):
     raise_amount = 0
     card_to_discard = -1
     if action_int == 0:
@@ -34,11 +33,18 @@ def action_int_to_action_tuple(action_int):
         card_to_discard = 1
     else:
         action_type = PokerEnv.ActionType.RAISE.value
-        raise_amount = action_int - 4
+        if action_int == 5:
+            raise_amount = int(pot_size * 0.33)
+        elif action_int == 6:
+            raise_amount = int(pot_size * 0.66)
+        elif action_int == 7:
+            raise_amount = int(pot_size * 1)
+        elif action_int == 8:
+            raise_amount = int(pot_size * 1.5)
 
     return (action_type, raise_amount, card_to_discard)
 
-def compute_valid_actions_mask(valid_actions, min_raise, max_raise):
+def compute_valid_actions_mask(valid_actions, min_raise, max_raise, pot_size):
     # put result[i] = -inf if action i is not valid
     # and 0 otherwise
     result = torch.zeros(ACTION_DIM)
@@ -53,8 +59,11 @@ def compute_valid_actions_mask(valid_actions, min_raise, max_raise):
         for i in range(5, ACTION_DIM):
             result[i] = -float("inf")
     else:
+        fractions = [0.33, 0.66, 1, 1.5]
         for i in range(5, ACTION_DIM):
-            if i - 4 < min_raise or i - 4 > max_raise:
+            idx = i - 5
+            raise_amount = int(fractions[idx] * pot_size)
+            if raise_amount < min_raise or raise_amount > max_raise:
                 result[i] = -float("inf")
     return result
 
