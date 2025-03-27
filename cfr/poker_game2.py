@@ -380,6 +380,18 @@ def decode_infoset_int(infoset):
     x = list(decode_fields(infoset, radices))
     x[1] = int_to_tuple_2(x[1])
     x[4] = int_to_tuple_5(x[4])
+
+    VALID_ACTIONS_MAP = [
+        "11101",
+        "10010",
+        "11011",
+        "10101",
+        "11010",
+        "11100",
+        "10100",
+        "10011",
+    ]
+    x[5] = VALID_ACTIONS_MAP[x[5]]
     return x
 
 from functools import reduce

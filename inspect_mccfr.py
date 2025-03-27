@@ -3,14 +3,23 @@ from itertools import islice
 import time
 import msgpack
 
-# Load avg_strategy from the pickle file
-# with open("strat_tables/avg_strategy_all.pkl", "rb") as f:
-#     avg_strategy = pickle.load(f)
+from cfr import poker_game2
 
-# Open and read the file
-with open("rust/strat_tables/avg_strategy_merged_20250326_082536.msgpack", "rb") as f:
-    # Unpack with raw=False to convert byte strings to regular strings
-    avg_strategy = msgpack.unpackb(f.read(), raw=False)    
+# Load avg_strategy from the pickle file
+with open("rust/strat_tables/merged_avg_strategy.pkl", "rb") as f:
+    avg_strategy = pickle.load(f)
+
+print(type(avg_strategy))
+
+for i, d in enumerate(avg_strategy):
+    if d is None: continue
+    if all([p == 1/9 for p in d]): continue
+    infoset = poker_game2.decode_infoset_int(i)
+    if infoset[4] != (0, 0, 0, 0, 0): continue
+    a = poker_game2.pretty_action_list(d)
+    print(infoset, a)
+
+exit(0)
 
 valid_actions = set()
 

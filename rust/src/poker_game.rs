@@ -1,6 +1,6 @@
 use poker::{Card, Eval, Evaluator, Rank, Suit};
 use rand::seq::SliceRandom;
-use rand::{Rng, SeedableRng};
+use rand::{thread_rng, Rng, SeedableRng};
 use std::cmp;
 use std::collections::HashMap;
 
@@ -338,7 +338,7 @@ impl PokerGame {
 
     /// Compute an information set index from an observation.
     /// (For simplicity the observation is encoded as a single integer using mixed–radix encoding.)
-    pub fn compute_information_set(obs: &Observation) -> usize {
+    pub fn compute_information_set(&self, obs: &Observation) -> usize {
         // Sort the flop (first three community cards).
         let mut flop = obs.community_cards[..3].to_vec();
         flop.sort();
@@ -423,17 +423,120 @@ impl PokerGame {
         let valid_actions_number = *valid_actions_map
             .get(valid_actions_str.as_str())
             .unwrap_or(&0);
+        // let fields = vec![
+        //     player,
+        //     my_hand_numbers_int,
+        //     are_my_two_cards_suited,
+        //     flush_number,
+        //     community_card_numbers_int,
+        //     valid_actions_number,
+        //     binned_pot_odds,
+        // ];
+        // let radices = vec![2, 55, 2, 3, 2002, 8, 3];
+        // encode_fields(&fields, &radices)
+
+        let my_hand_i32 = obs.my_cards.iter().map(|x| *x).collect::<Vec<_>>();
+        let community_cards_i32 = obs
+            .community_cards
+            .clone()
+            .into_iter()
+            .filter(|x| *x != -1)
+            .collect::<Vec<_>>();
+        let opp_drawn_cards_i32 = if obs.opp_drawn_card != -1 {
+            vec![obs.opp_drawn_card]
+        } else {
+            vec![]
+        };
+        let mut known_cards_i32 = vec![obs.my_discarded_card, obs.opp_discarded_card]
+            .into_iter()
+            .filter(|x| *x != -1)
+            .collect::<Vec<_>>();
+
+        known_cards_i32.extend(my_hand_i32.clone());
+        known_cards_i32.extend(community_cards_i32.clone());
+        known_cards_i32.extend(opp_drawn_cards_i32.clone());
+
+
+        let equity = self.monte_carlo_equity(
+            &my_hand_i32,
+            &community_cards_i32,
+            &opp_drawn_cards_i32,
+            &known_cards_i32,
+        );
+
+        let binned_equity = (equity * 8.0).floor() as i32;
+
         let fields = vec![
-            player,
-            my_hand_numbers_int,
-            are_my_two_cards_suited,
+            binned_equity,
             flush_number,
-            community_card_numbers_int,
-            valid_actions_number,
-            binned_pot_odds,
+            valid_actions_number as i32,
+            binned_pot_odds as i32,
         ];
-        let radices = vec![2, 55, 2, 3, 2002, 8, 3];
+        let radices = vec![9, 3, 8, 3];
+
         encode_fields(&fields, &radices)
+    }
+
+    fn monte_carlo_equity(
+        &self,
+        my_cards: &Vec<i32>,
+        community_cards: &Vec<i32>,
+        opp_drawn_card: &Vec<i32>,
+        known_cards: &Vec<i32>, // my_cards + community + opp_discarded + opp_drawn
+    ) -> f32 {
+        let mut rng = thread_rng();
+        let mut wins = 0;
+        let num_simulations = 300;
+        let total_needed = 7 - community_cards.len() - opp_drawn_card.len();
+
+        // Generate full deck of 27 cards
+        let all_cards: Vec<_> = (0..27).collect();
+        let non_shown_cards: Vec<_> = all_cards
+            .into_iter()
+            .filter(|c| !known_cards.contains(c))
+            .collect();
+
+        for _ in 0..num_simulations {
+            if non_shown_cards.len() < total_needed {
+                panic!("monte_carlo error: not enough cards to simulate"); // Not enough cards to simulate
+            }
+
+            let mut drawn = non_shown_cards.clone();
+            drawn.shuffle(&mut rng);
+            let drawn_cards: Vec<_>= drawn.into_iter().take(total_needed).collect();
+
+            let mut opp_cards = opp_drawn_card.to_vec();
+            opp_cards.extend_from_slice(&drawn_cards[..2 - opp_drawn_card.len()]);
+
+            let mut full_community = community_cards.to_vec();
+            full_community.extend_from_slice(&drawn_cards[2 - opp_drawn_card.len()..]);
+
+            if self.evaluate_hand(my_cards, &opp_cards, &full_community) {
+                wins += 1;
+            }
+        }
+
+        wins as f32 / num_simulations as f32
+    }
+
+    fn evaluate_hand(&self, my_cards: &[i32], opp_cards: &[i32], community_cards: &[i32]) -> bool {
+        let my_hand: Vec<Card> = my_cards
+            .iter()
+            .map(|&c| self.int_to_card(c))
+            .collect();
+        let opp_hand: Vec<Card> = opp_cards
+            .iter()
+            .map(|&c| self.int_to_card(c))
+            .collect();
+        let community: Vec<Card> = community_cards
+            .iter()
+            .map(|&c| self.int_to_card(c))
+            .collect();
+
+        let my_rank = self.evaluator.evaluate(&my_hand, &community);
+        let opp_rank = self.evaluator.evaluate(&opp_hand, &community);
+
+        my_rank < opp_rank
     }
 }
 
@@ -479,14 +582,17 @@ impl AbstractGame<PokerState> for PokerGame {
 
     fn get_information_set(&self, state: &PokerState, player: i32) -> usize {
         let obs = self.get_single_player_obs(state, player);
-        PokerGame::compute_information_set(&obs)
+        self.compute_information_set(&obs)
     }
 
     fn get_actions(&self, state: &PokerState) -> Vec<usize> {
         let acting = state.acting_agent;
         let valid = self._get_valid_actions(state, acting);
         let mut actions = Vec::new();
-        if valid[ActionType::Fold as usize] == 1 {
+        if valid[ActionType::Fold as usize] == 1
+            && valid[ActionType::Check as usize] == 0
+            && valid[ActionType::Discard as usize] == 0
+        {
             actions.push(0);
         }
         if valid[ActionType::Check as usize] == 1 {
@@ -760,28 +866,19 @@ pub fn pretty_action_list(action_probabilities: &Vec<f64>) -> String {
 // Assume our NiceInfoSet type returned by decode_infoset_int is defined as:
 #[derive(Debug)]
 pub struct NiceInfoSet {
-    pub player: i32,
-    pub my_hand: Vec<i32>,    // decoded from field 1 (tuple of 2 integers)
-    pub suited: i32,          // field 2
-    pub flush: i32,           // field 3
-    pub community: Vec<i32>,  // decoded from field 4 (tuple of 5 integers)
-    pub valid_actions: i32,   // field 5
-    pub binned_pot_odds: i32, // field 6
+    pub binned_equity: i32,
+    pub flush_number: i32,
+    pub valid_actions_number: i32,
+    pub binned_pot_odds: i32,
 }
 
 pub fn decode_infoset_int(infoset: usize) -> NiceInfoSet {
-    let radices = vec![2, 55, 2, 3, 2002, 8, 3];
+    let radices = vec![9, 3, 8, 3];
     let x = decode_fields(infoset, &radices);
-    // x should be a Vec<i32> of length 7.
-    let my_hand = int_to_tuple_2(x[1]);
-    let community = int_to_tuple_5(x[4]);
     NiceInfoSet {
-        player: x[0],
-        my_hand,
-        suited: x[2],
-        flush: x[3],
-        community,
-        valid_actions: x[5],
-        binned_pot_odds: x[6],
+        binned_equity: x[0],
+        flush_number: x[1],
+        valid_actions_number: x[2],
+        binned_pot_odds: x[3],
     }
 }

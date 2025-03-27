@@ -13,7 +13,7 @@ use std::thread;
 
 const NUM_INFO_SETS: usize = 31_711_680; // total number of information sets
 const NUM_ACTIONS: usize = 9; // maximum number of actions per info set
-const ITERATIONS: usize = 100_000;
+const ITERATIONS: usize = 1000;
 
 fn main() {
     // Create the output directory if it does not exist.
@@ -33,13 +33,13 @@ fn main() {
             let mut solver = MCCFR::new(game_instance, NUM_INFO_SETS, NUM_ACTIONS);
 
             // Run iterations: update for both players in each iteration.
-            for i in 0..ITERATIONS {
+            for iteration in 0..ITERATIONS {
                 for player in [0, 1].iter() {
                     solver.run_iteration(*player);
                 }
 
-                if i % 1000 == 0 {
-                    println!("Iteration {} finished", i);
+                println!("Iteration {} finished", iteration);
+                if iteration % 10 == 0 && thread_id == 0 {
                     // Save only the cumulative strategy.
                     let filename = format!("{}/cumulative_strategy_{}.pkl", output_dir, thread_id);
                     let data =
@@ -49,6 +49,20 @@ fn main() {
                         "Failed writing cumulative strategy file {}",
                         filename
                     ));
+
+                    // Compute the average strategy (a vector indexed by info set).
+                    let avg_strategy: Vec<Option<Vec<f64>>> = solver.compute_average_strategy();
+                    let avg_strategy: Vec<_> = avg_strategy
+                        .into_iter()
+                        .map(|opt| opt.unwrap_or_else(|| vec![]))
+                        .collect();
+
+                    // For each modified information set, decode and print if the community tuple equals (0,0,0,0,0).
+                    for &infoset in solver.modified_infosets.iter() {
+                        let nice_info_set: NiceInfoSet = decode_infoset_int(infoset);
+                        let nice_action_list = pretty_action_list(&avg_strategy[infoset]);
+                        println!("{:?}: {}", nice_info_set, nice_action_list);
+                    }
                 }
             }
             println!(
@@ -73,8 +87,8 @@ fn main() {
 /// Then computes an average strategy (by normalizing each info set's vector),
 /// and writes both merged cumulative and merged average strategies into files.
 fn merge_strategies(dir: &str, num_info_sets: usize, num_actions: usize) {
-    // Initialize a merged cumulative strategy as a Vec<Vec<f64>> of zeros.
-    let mut merged_cumulative = vec![vec![0.0; num_actions]; num_info_sets];
+    // Initialize a merged cumulative strategy as a Vec<Option<Vec<f64>>> of zeros.
+    let mut merged_cumulative: Vec<Option<Vec<f64>>> = vec![None; num_info_sets];
 
     // Read each file in the folder that starts with "cumulative_strategy_".
     let entries = fs::read_dir(dir).expect("Failed reading directory");
@@ -91,9 +105,15 @@ fn merge_strategies(dir: &str, num_info_sets: usize, num_actions: usize) {
                     .expect("Deserialization failed for cumulative strategy file");
             // Merge: for each information set, add the vector (or zeros if None).
             for (i, opt_vec) in cum_strategy.into_iter().enumerate() {
-                let vec_strategy = opt_vec.unwrap_or_else(|| vec![0.0; num_actions]);
+                if opt_vec.is_none() {
+                    continue;
+                }
+                let vec_strategy = opt_vec.unwrap();
                 for a in 0..num_actions {
-                    merged_cumulative[i][a] += vec_strategy[a];
+                    if merged_cumulative[i].is_none() {
+                        merged_cumulative[i] = Some(vec![0.0; num_actions]);
+                    }
+                    merged_cumulative[i].as_mut().unwrap()[a] += vec_strategy[a];
                 }
             }
             count += 1;
@@ -103,15 +123,18 @@ fn merge_strategies(dir: &str, num_info_sets: usize, num_actions: usize) {
     println!("Merged {} cumulative strategy files.", count);
 
     // Compute the average strategy from the merged cumulative strategy.
-    let merged_avg: Vec<Vec<f64>> = merged_cumulative
+    let merged_avg: Vec<Option<Vec<f64>>> = merged_cumulative
         .iter()
         .map(|action_counts| {
-            let total: f64 = action_counts.iter().sum();
+            if action_counts.is_none() {
+                return None
+            }
+            let total: f64 = action_counts.as_ref().unwrap().iter().sum();
             if total > 0.0 {
-                action_counts.iter().map(|&c| c / total).collect()
+                Some(action_counts.as_ref().unwrap().iter().map(|&c| c / total).collect())
             } else {
                 // Uniform strategy if no counts recorded.
-                vec![1.0 / num_actions as f64; num_actions]
+                Some(vec![1.0 / num_actions as f64; num_actions])
             }
         })
         .collect();
