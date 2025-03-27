@@ -403,7 +403,7 @@ impl PokerGame {
         } else {
             0.0
         };
-        let binned_pot_odds = (pot_odds * 3.0).floor() as i32;
+        let binned_pot_odds = (pot_odds * 5.0).floor() as i32;
 
         let player = obs.acting_agent;
         let my_hand_numbers_int = tuple_to_int_2(&my_cards_nums);
@@ -468,11 +468,10 @@ impl PokerGame {
 
         let fields = vec![
             binned_equity,
-            flush_number,
             valid_actions_number as i32,
             binned_pot_odds as i32,
         ];
-        let radices = vec![9, 3, 8, 3];
+        let radices = vec![9, 8, 5];
 
         encode_fields(&fields, &radices)
     }
@@ -486,7 +485,7 @@ impl PokerGame {
     ) -> f32 {
         let mut rng = thread_rng();
         let mut wins = 0;
-        let num_simulations = 300;
+        let num_simulations = 250;
         let total_needed = 7 - community_cards.len() - opp_drawn_card.len();
 
         // Generate full deck of 27 cards
@@ -867,18 +866,16 @@ pub fn pretty_action_list(action_probabilities: &Vec<f64>) -> String {
 #[derive(Debug)]
 pub struct NiceInfoSet {
     pub binned_equity: i32,
-    pub flush_number: i32,
     pub valid_actions_number: i32,
     pub binned_pot_odds: i32,
 }
 
 pub fn decode_infoset_int(infoset: usize) -> NiceInfoSet {
-    let radices = vec![9, 3, 8, 3];
+    let radices = vec![9, 8, 5];
     let x = decode_fields(infoset, &radices);
     NiceInfoSet {
         binned_equity: x[0],
-        flush_number: x[1],
-        valid_actions_number: x[2],
-        binned_pot_odds: x[3],
+        valid_actions_number: x[1],
+        binned_pot_odds: x[2],
     }
 }

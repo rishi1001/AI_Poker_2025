@@ -11,9 +11,9 @@ use std::fs;
 use std::path::Path;
 use std::thread;
 
-const NUM_INFO_SETS: usize = 31_711_680; // total number of information sets
+const NUM_INFO_SETS: usize = 360; // total number of information sets
 const NUM_ACTIONS: usize = 9; // maximum number of actions per info set
-const ITERATIONS: usize = 1000;
+const ITERATIONS: usize = 50_000;
 
 fn main() {
     // Create the output directory if it does not exist.
@@ -39,7 +39,7 @@ fn main() {
                 }
 
                 println!("Iteration {} finished", iteration);
-                if iteration % 10 == 0 && thread_id == 0 {
+                if iteration % 10 == 0 {
                     // Save only the cumulative strategy.
                     let filename = format!("{}/cumulative_strategy_{}.pkl", output_dir, thread_id);
                     let data =
@@ -50,25 +50,47 @@ fn main() {
                         filename
                     ));
 
-                    // Compute the average strategy (a vector indexed by info set).
-                    let avg_strategy: Vec<Option<Vec<f64>>> = solver.compute_average_strategy();
-                    let avg_strategy: Vec<_> = avg_strategy
-                        .into_iter()
-                        .map(|opt| opt.unwrap_or_else(|| vec![]))
-                        .collect();
-
-                    // For each modified information set, decode and print if the community tuple equals (0,0,0,0,0).
-                    for &infoset in solver.modified_infosets.iter() {
-                        let nice_info_set: NiceInfoSet = decode_infoset_int(infoset);
-                        let nice_action_list = pretty_action_list(&avg_strategy[infoset]);
-                        println!("{:?}: {}", nice_info_set, nice_action_list);
+                    
+                    if thread_id == 0 {
+                        // Compute the average strategy (a vector indexed by info set).
+                        let avg_strategy: Vec<Option<Vec<f64>>> = solver.compute_average_strategy();
+                        let avg_strategy: Vec<_> = avg_strategy
+                            .into_iter()
+                            .map(|opt| opt.unwrap_or_else(|| vec![]))
+                            .collect();
+                        // For each modified information set, decode and print if the community tuple equals (0,0,0,0,0).
+                        for &infoset in solver.modified_infosets.iter() {
+                            let nice_info_set: NiceInfoSet = decode_infoset_int(infoset);
+                            let nice_action_list = pretty_action_list(&avg_strategy[infoset]);
+                            println!("{:?}: {}", nice_info_set, nice_action_list);
+                        }
                     }
                 }
             }
+
+            // Save only the cumulative strategy.
+            let filename = format!("{}/cumulative_strategy_{}.pkl", output_dir, thread_id);
+            let data =
+                serde_pickle::to_vec(&solver.cumulative_strategy, Default::default())
+                    .expect("Serialization failed for cumulative strategy");
+            fs::write(&filename, data).expect(&format!(
+                "Failed writing cumulative strategy file {}",
+                filename
+            ));
+
+            // Compute the average strategy (a vector indexed by info set).
+            let avg_strategy: Vec<Option<Vec<f64>>> = solver.compute_average_strategy();
+            let avg_strategy: Vec<_> = avg_strategy
+                .into_iter()
+                .map(|opt| opt.unwrap_or_else(|| vec![]))
+                .collect();
+
             println!(
                 "Thread {} finished and saved its cumulative strategy.",
                 thread_id
             );
+
+
         });
         handles.push(handle);
     }
