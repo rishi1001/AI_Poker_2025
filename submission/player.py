@@ -5,7 +5,7 @@ import numpy as np
 from agents.agent import Agent
 from gym_env import PokerEnv
 import random
-from treys import Evaluator
+from treys import Evaluator, Card
 
 action_types = PokerEnv.ActionType
 int_to_card = PokerEnv.int_to_card
@@ -61,7 +61,7 @@ class PlayerAgent(Agent):
             self.cumulative_profit += reward
 
             if abs(reward) > 20: # Only log significant hand results
-                self.logger.info(f"Significant hand completed with reward: {reward}")
+                self.logger.info(f"Significant hand completed with reward: {reward} - {list(map(lambda c: Card.int_to_pretty_str(int_to_card(c)), observation["my_cards"]))} - {list(map(lambda c: Card.int_to_pretty_str(int_to_card(c)), observation["community_cards"]))} - {info["player_1_cards"]}")
 
 
     def compute_info_set(self, observation):
@@ -160,7 +160,7 @@ class PlayerAgent(Agent):
             return (action_types.CHECK, 0, -1)
         elif action_int == 2:
             return (action_types.CALL, 0, -1)
-        elif action_int == 3: # Discard lower card
+        elif action_int == 3 or action_int == 4: # Discard lower card
             lower_card_idx = 0 if my_hand[0] % 9 <= my_hand[1] % 9 else 1
             return (action_types.DISCARD, 0, lower_card_idx)
         elif action_int == 4: # Discard higher card
@@ -173,7 +173,8 @@ class PlayerAgent(Agent):
             return (action_types.RAISE, max_raise, -1)
         elif action_int == 7: # Raise (pot)
             pot = my_bet + opp_bet
-            safe_bet = max(min_raise, min(max_raise, pot))
+            mult = pot * 3
+            safe_bet = max(min_raise, min(max_raise, mult))
             return (action_types.RAISE, safe_bet, -1)
         elif action_int == 8: # Raise (half pot)
             pot = my_bet + opp_bet
@@ -184,6 +185,16 @@ class PlayerAgent(Agent):
         
     def safety_check(self, action, info_set, observation):
         binned_equity, flush_number, binned_pot_odds = info_set
+        if binned_equity >= 7:
+            if action[0].value != action_types.RAISE.value:
+                if observation["valid_actions"][action_types.RAISE.value] == 1:
+                    print(f"big binned equity and we were going to {action[0].name} - raising 3*pot instead")
+                    return (action_types.RAISE, max(observation["min_raise"], min(observation["max_raise"], (observation["my_bet"]+observation["opp_bet"])*3)), -1)
+                if observation["valid_actions"][action_types.CALL.value] == 1:
+                    return (action_types.CALL, 0, -1)
+                if observation["valid_actions"][action_types.CHECK.value] == 1:
+                    return (action_types.CHECK, 0, -1)
+                
         if action[0].value == action_types.FOLD.value:
             if observation["valid_actions"][action_types.CHECK.value] == 1:
                 print("YO")
@@ -197,7 +208,7 @@ class PlayerAgent(Agent):
                     return (action_types.RAISE, observation["min_raise"], -1)
             # if observation["valid_actions"][action_types.CALL.value] == 1:
         if action[0].value == action_types.DISCARD.value:
-            if observation["valid_actions"][action_types.CHECK.value] == 1 and binned_equity >= 5:
+            if observation["valid_actions"][action_types.CHECK.value] == 1:
                 print(f"DISCARDING on {binned_equity}, {flush_number}, {binned_pot_odds} - CHECK was possible ({observation["my_bet"]})")
                 return (action_types.CHECK, 0, -1)
         if action[0].value == action_types.RAISE.value:
@@ -306,4 +317,4 @@ class ChallengeOne(Agent):
 
     def observe(self, observation, reward, terminated, truncated, info):
         if terminated and abs(reward) > 20:  # Only log significant hand results
-            self.logger.info(f"Significant hand completed with reward: {reward} - {observation["my_cards"]} - {observation["community_cards"]}")
+            self.logger.info(f"Significant hand completed with reward: {reward} - {observation["my_cards"]} - {observation["community_cards"]} - {observation['opp_discarded_card']} - {observation['opp_drawn_card']}")
