@@ -1,12 +1,12 @@
 import pickle
 from itertools import islice
 import time
-import msgpack
+# import msgpack
 
 from cfr import poker_game2
 
 # Load avg_strategy from the pickle file
-with open("rust/strat_tables/merged_avg_strategy.pkl", "rb") as f:
+with open("submission/merged_avg_strategy.pkl", "rb") as f:
     avg_strategy = pickle.load(f)
 
 
