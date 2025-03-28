@@ -207,7 +207,7 @@ def run_api_match(
                 res = play_hand(env, base_url_0, base_url_1, logger, writer, hand_number)
                 bankrolls[0] += res["bot0_reward"]
                 bankrolls[1] += res["bot1_reward"]
-                if hand_number % 50 == 0:
+                if hand_number % 10 == 0:
                     logger.info(
                         f"Hand number: {hand_number}, {team_0_name} bankroll: {bankrolls[0]}, {team_1_name} bankroll: {bankrolls[1]}"
                     )

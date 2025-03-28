@@ -269,7 +269,7 @@ impl PokerGame {
                     card_to_discard: -1,
                 }
             }
-            7 => {
+            7 => { // pot
                 let max_bet = cmp::max(state.bets[0], state.bets[1]);
                 let max_raise = self.max_player_bet - max_bet;
                 let min_raise = cmp::min(state.min_raise, max_raise);
@@ -281,13 +281,52 @@ impl PokerGame {
                     card_to_discard: -1,
                 }
             }
-            8 => {
+            8 => { // half pot
                 let max_bet = cmp::max(state.bets[0], state.bets[1]);
                 let max_raise = self.max_player_bet - max_bet;
                 let min_raise = cmp::min(state.min_raise, max_raise);
                 let pot: i32 = state.bets.iter().sum();
                 let half_pot = pot / 2;
                 let safe_bet = cmp::max(min_raise, cmp::min(max_raise, half_pot));
+                Action {
+                    action_type: ActionType::Raise,
+                    amount: safe_bet,
+                    card_to_discard: -1,
+                }
+            }
+            9 => { // uniform(1 * pot, 2 * pot)
+                let max_bet = cmp::max(state.bets[0], state.bets[1]);
+                let max_raise = self.max_player_bet - max_bet;
+                let min_raise = cmp::min(state.min_raise, max_raise);
+                let pot: i32 = state.bets.iter().sum();
+                let random_bet = rand::thread_rng().gen_range(pot..pot * 2);
+                let safe_bet = cmp::max(min_raise, cmp::min(max_raise, random_bet));
+                Action {
+                    action_type: ActionType::Raise,
+                    amount: safe_bet,
+                    card_to_discard: -1,
+                }
+            }
+            10 => { // uniform(2 * pot, 4 * pot)
+                let max_bet = cmp::max(state.bets[0], state.bets[1]);
+                let max_raise = self.max_player_bet - max_bet;
+                let min_raise = cmp::min(state.min_raise, max_raise);
+                let pot: i32 = state.bets.iter().sum();
+                let random_bet = rand::thread_rng().gen_range(pot * 2..pot * 4);
+                let safe_bet = cmp::max(min_raise, cmp::min(max_raise, random_bet));
+                Action {
+                    action_type: ActionType::Raise,
+                    amount: safe_bet,
+                    card_to_discard: -1,
+                }
+            }
+            11 => { // uniform(pot * 4, max_raise)
+                let max_bet = cmp::max(state.bets[0], state.bets[1]);
+                let max_raise = self.max_player_bet - max_bet;
+                let min_raise = cmp::min(state.min_raise, max_raise);
+                let pot: i32 = state.bets.iter().sum();
+                let random_bet = rand::thread_rng().gen_range(pot * 4..cmp::max(pot * 4 + 1, max_raise));
+                let safe_bet = cmp::max(min_raise, cmp::min(max_raise, random_bet));
                 Action {
                     action_type: ActionType::Raise,
                     amount: safe_bet,
@@ -339,6 +378,7 @@ impl PokerGame {
     /// Compute an information set index from an observation.
     /// (For simplicity the observation is encoded as a single integer using mixed–radix encoding.)
     pub fn compute_information_set(&self, obs: &Observation) -> usize {
+        let street = obs.street;
         // Sort the flop (first three community cards).
         let mut flop = obs.community_cards[..3].to_vec();
         flop.sort();
@@ -403,7 +443,7 @@ impl PokerGame {
         } else {
             0.0
         };
-        let binned_pot_odds = (pot_odds * 5.0).floor() as i32;
+        let binned_pot_odds = (pot_odds * 8.0).floor() as i32;
 
         let player = obs.acting_agent;
         let my_hand_numbers_int = tuple_to_int_2(&my_cards_nums);
@@ -464,14 +504,32 @@ impl PokerGame {
             &known_cards_i32,
         );
 
-        let binned_equity = (equity * 8.0).floor() as i32;
+        // let binned_equity = (equity * 8.0).floor() as i32;
+
+        let mut binned_equity = 0;
+        
+        if obs.street <= 1 {
+            // thresholds for bins
+            let thresholds = [0.3505, 0.377, 0.3945, 0.409, 0.427, 0.4395, 0.455, 0.4705, 0.483, 0.503, 0.5195, 0.531, 0.5425, 0.557, 0.5785];
+
+            let mut binned_equity: i32 = 15;
+            for i in 0..thresholds.len() {
+                if equity <= thresholds[i] {
+                    binned_equity = i as i32;
+                    break;
+                }
+            }
+        } else {
+            binned_equity = cmp::min(15, (equity * 16.0).floor() as i32);
+        }
 
         let fields = vec![
+            street,
             binned_equity,
             valid_actions_number as i32,
             binned_pot_odds as i32,
         ];
-        let radices = vec![9, 8, 5];
+        let radices = vec![4, 16, 8, 8];
 
         encode_fields(&fields, &radices)
     }
@@ -485,7 +543,7 @@ impl PokerGame {
     ) -> f32 {
         let mut rng = thread_rng();
         let mut wins = 0;
-        let num_simulations = 50;
+        let num_simulations = 250;
         let total_needed = 7 - community_cards.len() - opp_drawn_card.len();
 
         // Generate full deck of 27 cards
@@ -609,6 +667,9 @@ impl AbstractGame<PokerState> for PokerGame {
             actions.push(6);
             actions.push(7);
             actions.push(8);
+            actions.push(9);
+            actions.push(10);
+            actions.push(11);
         }
         actions
     }
@@ -865,17 +926,19 @@ pub fn pretty_action_list(action_probabilities: &Vec<f64>) -> String {
 // Assume our NiceInfoSet type returned by decode_infoset_int is defined as:
 #[derive(Debug)]
 pub struct NiceInfoSet {
+    pub street: i32,
     pub binned_equity: i32,
     pub valid_actions_number: i32,
     pub binned_pot_odds: i32,
 }
 
 pub fn decode_infoset_int(infoset: usize) -> NiceInfoSet {
-    let radices = vec![9, 8, 5];
+    let radices = vec![4, 16, 8, 8];
     let x = decode_fields(infoset, &radices);
     NiceInfoSet {
-        binned_equity: x[0],
-        valid_actions_number: x[1],
-        binned_pot_odds: x[2],
+        street: x[0],
+        binned_equity: x[1],
+        valid_actions_number: x[2],
+        binned_pot_odds: x[3],
     }
 }

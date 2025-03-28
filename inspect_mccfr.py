@@ -14,7 +14,7 @@ for i, d in enumerate(avg_strategy):
     if d is None: continue
     infoset = poker_game2.decode_infoset_int(i)
     a = poker_game2.pretty_action_list(d)
-    print(f"binned_equity: {infoset[0]}, valid_actions_number: {infoset[1]}, binned_pot_odds: {infoset[2]}", a)
+    print(f"street: {infoset[0]}, binned_equity: {infoset[1]}, valid_actions_number: {infoset[2]}, binned_pot_odds: {infoset[3]}", a)
 print(len(avg_strategy))
 # valid_actions = set()
 

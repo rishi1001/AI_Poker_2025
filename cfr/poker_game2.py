@@ -376,7 +376,7 @@ class PokerGame(AbstractGame):
         return info_set_index
 
 def decode_infoset_int(infoset):
-    radices = (9, 8, 5)
+    radices = (4, 16, 8, 8)
     x = list(decode_fields(infoset, radices))
     
     return x
@@ -393,7 +393,10 @@ def pretty_action_list(action_probabilities):
     r_max_p = action_probabilities[6]
     r_pot_p = action_probabilities[7]
     r_hp_p = action_probabilities[8]
-    return f"F:{f_p:.3f}|Ch:{ch_p:.3f}|Ca:{call_p:.3f}|D0:{d0_p:.3f}|D1:{d1_p:.3f}|Rmin:{r_min_p:.3f}|Rmax:{r_max_p:.3f}|Rp:{r_pot_p:.3f}|Rhp:{r_hp_p:.3f}"
+    r_1_5_p = action_probabilities[9]
+    r_2_5_p = action_probabilities[10]
+    r_4_plus_p = action_probabilities[11]
+    return f"F:{f_p:.3f}|Ch:{ch_p:.3f}|Ca:{call_p:.3f}|D0:{d0_p:.3f}|D1:{d1_p:.3f}|Rmin:{r_min_p:.3f}|Rmax:{r_max_p:.3f}|Rp:{r_pot_p:.3f}|Rhp:{r_hp_p:.3f}|R1.5:{r_1_5_p:.3f}|R2.5:{r_2_5_p:.3f}|R4+:{r_4_plus_p:.3f}"
 
 def encode_fields(values, radices):
     """

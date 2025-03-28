@@ -64,7 +64,6 @@ class PlayerAgent(Agent):
 
 
     def compute_info_set(self, observation):
-        street = observation["street"]
         my_cards = [int(card) for card in observation["my_cards"]]
         community_cards = [card for card in observation["community_cards"] if card != -1]
         opp_discarded_card = [observation["opp_discarded_card"]] if observation["opp_discarded_card"] != -1 else []
@@ -126,10 +125,10 @@ class PlayerAgent(Agent):
         binned_pot_odds = int(pot_odds * 5) # TODO CHANGE TO 5
 
 
-        return (street, binned_equity, valid_actions_number, binned_pot_odds)
+        return (binned_equity, valid_actions_number, binned_pot_odds)
     
     def info_set_to_integer(self, info_set):
-        radices = [4, 16, 8, 8]
+        radices = [9, 8, 5]
         return self.encode_fields(info_set, radices)
     def encode_fields(self, values, radices):
         """
@@ -143,7 +142,7 @@ class PlayerAgent(Agent):
         return reduce(lambda acc, pair: acc * pair[1] + pair[0], zip(values, radices), 0)
     
     def sample_action_from_distribution(self, action_distribution):
-        # return np.random.choice(len(action_distribution), p=action_distribution)
+        return np.random.choice(len(action_distribution), p=action_distribution)
 
         # just take action with highest probability
         return np.argmax(action_distribution)
@@ -173,33 +172,18 @@ class PlayerAgent(Agent):
             return (action_types.RAISE, max_raise, -1)
         elif action_int == 7: # Raise (pot)
             pot = my_bet + opp_bet
-            mult = pot
+            mult = pot * 3
             safe_bet = max(min_raise, min(max_raise, mult))
             return (action_types.RAISE, safe_bet, -1)
         elif action_int == 8: # Raise (half pot)
             pot = my_bet + opp_bet
             safe_bet = max(min_raise, min(max_raise, pot))
             return (action_types.RAISE, safe_bet, -1)
-        elif action_int == 9: # Raise (third pot)
-            pot = my_bet + opp_bet
-            mult = pot // 3
-            safe_bet = max(min_raise, min(max_raise, mult))
-            return (action_types.RAISE, safe_bet, -1)
-        elif action_int == 10: # Raise (double pot)
-            pot = my_bet + opp_bet
-            mult = pot * 2
-            safe_bet = max(min_raise, min(max_raise, mult))
-            return (action_types.RAISE, safe_bet, -1)
-        elif action_int == 11: # Raise (triple pot)
-            pot = my_bet + opp_bet
-            mult = pot * 3
-            safe_bet = max(min_raise, min(max_raise, mult))
-            return (action_types.RAISE, safe_bet, -1)
         else:
             raise ValueError(f"Invalid action integer: {action_int}")
         
     def safety_check(self, action, info_set, observation):
-        street, binned_equity, flush_number, binned_pot_odds = info_set
+        binned_equity, flush_number, binned_pot_odds = info_set
         if binned_equity >= 7:
             if action[0].value != action_types.RAISE.value:
                 if observation["valid_actions"][action_types.RAISE.value] == 1:
@@ -224,11 +208,11 @@ class PlayerAgent(Agent):
             # if observation["valid_actions"][action_types.CALL.value] == 1:
         if action[0].value == action_types.DISCARD.value:
             if observation["valid_actions"][action_types.CHECK.value] == 1:
-                print(f"DISCARDING on {street}, {binned_equity}, {flush_number}, {binned_pot_odds} - CHECK was possible ({observation["my_bet"]})")
+                print(f"DISCARDING on {binned_equity}, {flush_number}, {binned_pot_odds} - CHECK was possible ({observation["my_bet"]})")
                 return (action_types.CHECK, 0, -1)
         if action[0].value == action_types.RAISE.value:
             if binned_equity < 6:
-                print(f"WTF - Raising with {street}, {binned_equity}, {flush_number}, {binned_pot_odds} - raised amount {action[1]} - {observation["valid_actions"][action_types.CHECK.value]}, {observation["valid_actions"][action_types.CALL.value]}")
+                print(f"WTF - Raising with {binned_equity}, {flush_number}, {binned_pot_odds} - raised amount {action[1]} - {observation["valid_actions"][action_types.CHECK.value]}, {observation["valid_actions"][action_types.CALL.value]}")
                 if observation["valid_actions"][action_types.CHECK.value] == 1:
                     return (action_types.CHECK, 0, -1)
                 elif observation["valid_actions"][action_types.CALL.value] == 1:

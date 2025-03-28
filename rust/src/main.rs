@@ -11,8 +11,8 @@ use std::fs;
 use std::path::Path;
 use std::thread;
 
-const NUM_INFO_SETS: usize = 360; // total number of information sets
-const NUM_ACTIONS: usize = 9; // maximum number of actions per info set
+const NUM_INFO_SETS: usize = 4096; // total number of information sets
+const NUM_ACTIONS: usize = 12; // maximum number of actions per info set
 const ITERATIONS: usize = 50_000;
 
 fn main() {
@@ -25,7 +25,7 @@ fn main() {
     // Spawn 8 threads. Each thread will run its own MCCFR solver and, after ITERATIONS,
     // save its cumulative strategy into a file named "cumulative_strategy_{thread_id}.pkl".
     let mut handles = Vec::new();
-    for thread_id in 0..8 {
+    for thread_id in 0..16 {
         let output_dir = output_dir.to_string();
         let handle = thread::spawn(move || {
             // Each thread instantiates its own game and MCCFR solver.
