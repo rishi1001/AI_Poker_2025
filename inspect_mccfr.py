@@ -6,13 +6,14 @@ import msgpack
 from cfr import poker_game2
 
 # Load avg_strategy from the pickle file
-with open("rust/strat_tables/merged_avg_strategy.pkl", "rb") as f:
+with open("submission_new/merged_avg_strategy.pkl", "rb") as f:
     avg_strategy = pickle.load(f)
 
 
 for i, d in enumerate(avg_strategy):
     if d is None: continue
     infoset = poker_game2.decode_infoset_int(i)
+    if infoset[0] > 0: continue
     a = poker_game2.pretty_action_list(d)
     print(f"street: {infoset[0]}, binned_equity: {infoset[1]}, valid_actions_number: {infoset[2]}, binned_pot_odds: {infoset[3]}", a)
 print(len(avg_strategy))

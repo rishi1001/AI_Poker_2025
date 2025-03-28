@@ -5,7 +5,7 @@
         "player_id": "bot0"
     },
     "bot1": {
-        "file_path": "submission.player.ChallengeOne",
+        "file_path": "submission_new.player.PlayerAgentExperimental",
         "port": 8001,
         "player_id": "bot1"
     },

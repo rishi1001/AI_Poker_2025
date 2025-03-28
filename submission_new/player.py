@@ -10,7 +10,9 @@ from treys import Evaluator, Card
 action_types = PokerEnv.ActionType
 int_to_card = PokerEnv.int_to_card
 
-class PlayerAgent(Agent):
+ARGMAX_SAMPLING = True
+
+class PlayerAgentExperimental(Agent):
     def __name__(self):
         return "GigaReducedMCCFR"
 
@@ -23,7 +25,7 @@ class PlayerAgent(Agent):
         self.hand_number = 0
         self.cumulative_profit = 0
 
-        file_name = "submission/merged_avg_strategy.pkl"
+        file_name = "submission_new/merged_avg_strategy.pkl"
         
         print(f"Loading avg_strategy from {file_name}")
         # Load avg_strategy from the pickle file
@@ -91,7 +93,17 @@ class PlayerAgent(Agent):
             if (drawn_cards := random.sample(non_shown_cards, 7 - len(community_cards) - len(opp_drawn_card)))
         )
         equity = wins / num_simulations
-        binned_equity = int(equity * 8)
+
+        if street <= 1:
+            # special binning
+            thresholds = [0.3505, 0.377, 0.3945, 0.409, 0.427, 0.4395, 0.455, 0.4705, 0.483, 0.503, 0.5195, 0.531, 0.5425, 0.557, 0.5785]
+            binned_equity = 15
+            for i, threshold in enumerate(thresholds):
+                if equity <= threshold:
+                    binned_equity = i
+                    break
+        else:
+            binned_equity = min(15, int(equity * 16))
 
 
         suits_map = {}
@@ -123,13 +135,13 @@ class PlayerAgent(Agent):
         continue_cost = observation["opp_bet"] - observation["my_bet"]
         pot_size = observation["my_bet"] + observation["opp_bet"]
         pot_odds = continue_cost / pot_size if continue_cost > 0 else 0
-        binned_pot_odds = int(pot_odds * 5) # TODO CHANGE TO 5
+        binned_pot_odds = int(pot_odds * 8)
 
 
         return (street, binned_equity, valid_actions_number, binned_pot_odds)
     
     def info_set_to_integer(self, info_set):
-        radices = [4, 9, 8, 5]
+        radices = [4, 16, 8, 8]
         return self.encode_fields(info_set, radices)
     def encode_fields(self, values, radices):
         """
@@ -143,7 +155,8 @@ class PlayerAgent(Agent):
         return reduce(lambda acc, pair: acc * pair[1] + pair[0], zip(values, radices), 0)
     
     def sample_action_from_distribution(self, action_distribution):
-        # return np.random.choice(len(action_distribution), p=action_distribution)
+        if not ARGMAX_SAMPLING:
+            return np.random.choice(len(action_distribution), p=action_distribution)
 
         # just take action with highest probability
         return np.argmax(action_distribution)
@@ -180,19 +193,19 @@ class PlayerAgent(Agent):
             pot = my_bet + opp_bet
             safe_bet = max(min_raise, min(max_raise, pot))
             return (action_types.RAISE, safe_bet, -1)
-        elif action_int == 9: # Raise (third pot)
+        elif action_int == 9: # Raise uniform(1 * pot, 2 * pot)
             pot = my_bet + opp_bet
-            mult = pot // 3
+            mult = random.randrange(1 * pot, 2 * pot)
             safe_bet = max(min_raise, min(max_raise, mult))
             return (action_types.RAISE, safe_bet, -1)
-        elif action_int == 10: # Raise (double pot)
+        elif action_int == 10: # Raise uniform(2 * pot, 4 * pot)
             pot = my_bet + opp_bet
-            mult = pot * 2
+            mult = random.randrange(2 * pot, 4 * pot)
             safe_bet = max(min_raise, min(max_raise, mult))
             return (action_types.RAISE, safe_bet, -1)
-        elif action_int == 11: # Raise (triple pot)
+        elif action_int == 11: # Raise uniform(4 * pot, max_raise)
             pot = my_bet + opp_bet
-            mult = pot * 3
+            mult = random.randrange(4 * pot, max(4 * pot + 1, max_raise))
             safe_bet = max(min_raise, min(max_raise, mult))
             return (action_types.RAISE, safe_bet, -1)
         else:
@@ -200,7 +213,7 @@ class PlayerAgent(Agent):
         
     def safety_check(self, action, info_set, observation):
         street, binned_equity, flush_number, binned_pot_odds = info_set
-        if binned_equity >= 7:
+        if binned_equity >= 14:
             if action[0].value != action_types.RAISE.value:
                 if observation["valid_actions"][action_types.RAISE.value] == 1:
                     print(f"big binned equity and we were going to {action[0].name} - raising 3*pot instead")
@@ -214,11 +227,11 @@ class PlayerAgent(Agent):
             if observation["valid_actions"][action_types.CHECK.value] == 1:
                 print("YO")
                 return (action_types.CHECK, 0, -1)
-            if binned_equity >= 5:
+            if binned_equity >= 10:
                 if observation["valid_actions"][action_types.CALL.value] == 1:
                     print("AAA")
                     return (action_types.CALL, 0, -1)
-                elif binned_equity >= 7:
+                elif binned_equity >= 14:
                     print("BBB")
                     return (action_types.RAISE, observation["min_raise"], -1)
             # if observation["valid_actions"][action_types.CALL.value] == 1:
@@ -227,7 +240,7 @@ class PlayerAgent(Agent):
                 print(f"DISCARDING on {street}, {binned_equity}, {flush_number}, {binned_pot_odds} - CHECK was possible ({observation["my_bet"]})")
                 return (action_types.CHECK, 0, -1)
         if action[0].value == action_types.RAISE.value:
-            if binned_equity < 6:
+            if binned_equity < 12:
                 print(f"WTF - Raising with {street}, {binned_equity}, {flush_number}, {binned_pot_odds} - raised amount {action[1]} - {observation["valid_actions"][action_types.CHECK.value]}, {observation["valid_actions"][action_types.CALL.value]}")
                 if observation["valid_actions"][action_types.CHECK.value] == 1:
                     return (action_types.CHECK, 0, -1)
