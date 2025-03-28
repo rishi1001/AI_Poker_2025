@@ -506,13 +506,13 @@ impl PokerGame {
 
         // let binned_equity = (equity * 8.0).floor() as i32;
 
-        let mut binned_equity = 0;
+        let mut binned_equity;
         
         if obs.street <= 1 {
             // thresholds for bins
             let thresholds = [0.3505, 0.377, 0.3945, 0.409, 0.427, 0.4395, 0.455, 0.4705, 0.483, 0.503, 0.5195, 0.531, 0.5425, 0.557, 0.5785];
 
-            let mut binned_equity: i32 = 15;
+            binned_equity = 15;
             for i in 0..thresholds.len() {
                 if equity <= thresholds[i] {
                     binned_equity = i as i32;
