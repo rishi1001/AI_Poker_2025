@@ -158,7 +158,16 @@ class PlayerAgentExperimental(Agent):
         if not ARGMAX_SAMPLING:
             return np.random.choice(len(action_distribution), p=action_distribution)
 
-        # just take action with highest probability
+        # # just take action with highest probability
+        # # but first sum up all raise probs, from idx 5 to 11 included
+        # raise_prob = 0
+        # for i in range(5, 12):
+        #     raise_prob += action_distribution[i]
+
+        # if raise_prob > 0.5:
+        #     # sample from the relative probabilities, first renormalize
+        #     renormalized_probs = np.array(action_distribution[5:]) / raise_prob
+        #     return np.random.choice(len(renormalized_probs), p=renormalized_probs) + 5
         return np.argmax(action_distribution)
 
     def action_int_to_action(self, action_int, observation):
@@ -213,34 +222,36 @@ class PlayerAgentExperimental(Agent):
         
     def safety_check(self, action, info_set, observation):
         street, binned_equity, flush_number, binned_pot_odds = info_set
-        if binned_equity >= 14:
+        if binned_equity >= 15:
             if action[0].value != action_types.RAISE.value:
                 if observation["valid_actions"][action_types.RAISE.value] == 1:
-                    print(f"big binned equity and we were going to {action[0].name} - raising 3*pot instead")
-                    return (action_types.RAISE, max(observation["min_raise"], min(observation["max_raise"], (observation["my_bet"]+observation["opp_bet"])*3)), -1)
+                    print(f"big binned equity and we were going to {action[0].name} - raising x*pot instead")
+                    pot = observation["my_bet"] + observation["opp_bet"]
+                    rand_bet = random.randrange(1, 7) * pot
+                    return (action_types.RAISE, max(observation["min_raise"], min(observation["max_raise"], (observation["my_bet"]+observation["opp_bet"])*4)), -1)
                 if observation["valid_actions"][action_types.CALL.value] == 1:
                     return (action_types.CALL, 0, -1)
                 if observation["valid_actions"][action_types.CHECK.value] == 1:
                     return (action_types.CHECK, 0, -1)
                 
-        if action[0].value == action_types.FOLD.value:
-            if observation["valid_actions"][action_types.CHECK.value] == 1:
-                print("YO")
-                return (action_types.CHECK, 0, -1)
-            if binned_equity >= 10:
-                if observation["valid_actions"][action_types.CALL.value] == 1:
-                    print("AAA")
-                    return (action_types.CALL, 0, -1)
-                elif binned_equity >= 14:
-                    print("BBB")
-                    return (action_types.RAISE, observation["min_raise"], -1)
-            # if observation["valid_actions"][action_types.CALL.value] == 1:
+        # if action[0].value == action_types.FOLD.value:
+        #     if observation["valid_actions"][action_types.CHECK.value] == 1:
+        #         print("YO")
+        #         return (action_types.CHECK, 0, -1)
+        #     if binned_equity >= 10:
+        #         if observation["valid_actions"][action_types.CALL.value] == 1:
+        #             print("AAA")
+        #             return (action_types.CALL, 0, -1)
+        #         elif binned_equity >= 14:
+        #             print("BBB")
+        #             return (action_types.RAISE, observation["min_raise"], -1)
+        #     # if observation["valid_actions"][action_types.CALL.value] == 1:
         if action[0].value == action_types.DISCARD.value:
             if observation["valid_actions"][action_types.CHECK.value] == 1:
                 print(f"DISCARDING on {street}, {binned_equity}, {flush_number}, {binned_pot_odds} - CHECK was possible ({observation["my_bet"]})")
                 return (action_types.CHECK, 0, -1)
         if action[0].value == action_types.RAISE.value:
-            if binned_equity < 12:
+            if binned_equity < 8:
                 print(f"WTF - Raising with {street}, {binned_equity}, {flush_number}, {binned_pot_odds} - raised amount {action[1]} - {observation["valid_actions"][action_types.CHECK.value]}, {observation["valid_actions"][action_types.CALL.value]}")
                 if observation["valid_actions"][action_types.CHECK.value] == 1:
                     return (action_types.CHECK, 0, -1)
